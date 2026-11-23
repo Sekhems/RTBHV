@@ -1173,14 +1173,17 @@ vkQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo* pSubmits,
     if (submitCount == 0 || !pSubmits) return real(queue, 0, nullptr, fence);
     // [CRASHFIX] Remove NULL/FAKE command buffers and semaphores from every submit entry.
     // amdvlk64 derefs NULL command buffer at [obj+8] during submit -> AV at 0x8.
-    // Previous filter only dropped entries where ALL CBs were bad; a mixed entry
-    // [valid, NULL, valid] still passed the NULL CB to the driver -> same crash.
-    // Now each entry gets a new filtered CB array; NULL/FAKE CBs are removed individually.
+    // Each entry gets a new filtered CB array; NULL/FAKE CBs are removed individually.
+    // Data is held in shared_ptr so it survives SubmitTimed timeout (worker thread
+    // may still be running when this function returns).
     {
-        std::vector<VkSubmitInfo> safe;
-        safe.reserve(submitCount);
-        std::vector<std::vector<VkCommandBuffer>> safeCBs(submitCount);
-        std::vector<std::vector<VkSemaphore>> safeWaitSem(submitCount), safeSigSem(submitCount);
+        struct SafeData {
+            std::vector<VkSubmitInfo> infos;
+            std::vector<std::vector<VkCommandBuffer>> cbs;
+            std::vector<std::vector<VkSemaphore>> waitSem, sigSem;
+        };
+        auto safe = std::make_shared<SafeData>();
+        safe->infos.reserve(submitCount);
         uint32_t totalFiltered = 0;
         for (uint32_t i = 0; i < submitCount; ++i) {
             // Filter command buffers
@@ -1211,31 +1214,63 @@ vkQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo* pSubmits,
                 }
             }
             if (cbs.empty() && ws.empty() && ss.empty()) continue;
-            // Move vectors into persistent containers FIRST, then set pointers
-            // to their .data() - otherwise the pointers dangle after the move.
-            safeCBs.push_back(std::move(cbs));
-            safeWaitSem.push_back(std::move(ws));
-            safeSigSem.push_back(std::move(ss));
-            size_t idx = safe.size();
+            safe->cbs.push_back(std::move(cbs));
+            safe->waitSem.push_back(std::move(ws));
+            safe->sigSem.push_back(std::move(ss));
+            size_t idx = safe->infos.size();
             VkSubmitInfo entry = pSubmits[i];
-            entry.commandBufferCount = (uint32_t)safeCBs[idx].size();
-            entry.pCommandBuffers = safeCBs[idx].empty() ? nullptr : safeCBs[idx].data();
-            entry.waitSemaphoreCount = (uint32_t)safeWaitSem[idx].size();
-            entry.pWaitSemaphores = safeWaitSem[idx].empty() ? nullptr : safeWaitSem[idx].data();
-            entry.signalSemaphoreCount = (uint32_t)safeSigSem[idx].size();
-            entry.pSignalSemaphores = safeSigSem[idx].empty() ? nullptr : safeSigSem[idx].data();
-            safe.push_back(entry);
+            entry.commandBufferCount = (uint32_t)safe->cbs[idx].size();
+            entry.pCommandBuffers = safe->cbs[idx].empty() ? nullptr : safe->cbs[idx].data();
+            entry.waitSemaphoreCount = (uint32_t)safe->waitSem[idx].size();
+            entry.pWaitSemaphores = safe->waitSem[idx].empty() ? nullptr : safe->waitSem[idx].data();
+            entry.signalSemaphoreCount = (uint32_t)safe->sigSem[idx].size();
+            entry.pSignalSemaphores = safe->sigSem[idx].empty() ? nullptr : safe->sigSem[idx].data();
+            safe->infos.push_back(entry);
         }
-        if (safe.empty()) return VK_SUCCESS;
+        if (safe->infos.empty()) return VK_SUCCESS;
         if (totalFiltered > 0) {
             static volatile LONG n = 0;
             if (InterlockedIncrement(&n) <= 20)
                 LogLine("vkQueueSubmit: filtered %u NULL/FAKE CBs/sems from %u/%u entries",
-                    totalFiltered, (unsigned)safe.size(), submitCount);
+                    totalFiltered, (unsigned)safe->infos.size(), submitCount);
         }
-        return SubmitTimed([&]() { return real(queue, (uint32_t)safe.size(), safe.data(), fence); }, "vkQueueSubmit");
+        // [CRASHFIX] Call driver DIRECTLY on current thread - NOT via SubmitTimed/DriverCallTimed.
+        // DriverCallTimed spawns a worker thread via CreateThread; amdvlk64 requires vkQueueSubmit
+        // to be called from the SAME thread that created the queue. Cross-thread submit reads
+        // NULL thread-local state -> AV at [NULL+8], RBX=0. This was the real crash root cause.
+        VkResult drvRes = VK_SUCCESS;
+        if (g_spvCfg.catchDriverCrash) {
+            if (!SehRun([&]() { drvRes = real(queue, (uint32_t)safe->infos.size(), safe->infos.data(), fence); })) drvRes = VK_TIMEOUT;
+        } else {
+            drvRes = real(queue, (uint32_t)safe->infos.size(), safe->infos.data(), fence);
+        }
+        InterlockedIncrement(&g_submitCount);
+        InterlockedExchange(&g_lastSubmitRes, static_cast<LONG>(drvRes));
+        InterlockedExchange64(&g_lastSubmitTick, static_cast<LONG64>(GetTickCount64()));
+        if (drvRes != VK_SUCCESS) {
+            static volatile LONG badSubmit = 0;
+            const LONG n = InterlockedIncrement(&badSubmit);
+            if (n <= 20 || n % 500 == 0)
+                LogLine("!!! vkQueueSubmit FAILED: result=%d (failures so far=%ld)", static_cast<int>(drvRes), static_cast<long>(n));
+        }
+        return drvRes;
     }
-    return SubmitTimed([&]() { return real(queue, submitCount, pSubmits, fence); }, "vkQueueSubmit");
+    VkResult drvRes2 = VK_SUCCESS;
+    if (g_spvCfg.catchDriverCrash) {
+        if (!SehRun([&]() { drvRes2 = real(queue, submitCount, pSubmits, fence); })) drvRes2 = VK_TIMEOUT;
+    } else {
+        drvRes2 = real(queue, submitCount, pSubmits, fence);
+    }
+    InterlockedIncrement(&g_submitCount);
+    InterlockedExchange(&g_lastSubmitRes, static_cast<LONG>(drvRes2));
+    InterlockedExchange64(&g_lastSubmitTick, static_cast<LONG64>(GetTickCount64()));
+    if (drvRes2 != VK_SUCCESS) {
+        static volatile LONG badSubmit2 = 0;
+        const LONG n = InterlockedIncrement(&badSubmit2);
+        if (n <= 20 || n % 500 == 0)
+            LogLine("!!! vkQueueSubmit FAILED: result=%d (failures so far=%ld)", static_cast<int>(drvRes2), static_cast<long>(n));
+    }
+    return drvRes2;
 }
 
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
