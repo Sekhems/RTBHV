@@ -7848,12 +7848,11 @@ namespace swrtx {
         }
         s_enabled = GetPrivateProfileIntW(L"spirv", L"SoftRT", 1, ini) ? 1 : 0;
         s_log = GetPrivateProfileIntW(L"spirv", L"SoftRTLog", 1, ini) ? 1 : 0;
-        int amb = 35;
-        GetPrivateProfileIntW(L"spirv", L"SoftRTAmbient", 35, ini);
-        // SoftRTAmbient is a float 0..4 in the ini; read as float.
+        // SoftRTAmbient is a float 0..4 in the ini (e.g. 0.35), same scale as
+        // SpvConfig::softRTAmbient in LoadSpvConfigImpl — do NOT divide by 100.
         wchar_t sb[64]{};
         GetPrivateProfileStringW(L"spirv", L"SoftRTAmbient", L"0.35", sb, 64, ini);
-        float av = (float)(wcstod(sb, nullptr) / 100.0);
+        float av = (float)wcstod(sb, nullptr);
         if (av < 0.0f) av = 0.0f; if (av > 4.0f) av = 4.0f;
         s_ambient[0] = av; s_ambient[1] = av; s_ambient[2] = av * 1.12f; s_ambient[3] = 1.0f;
         (void)amb;
