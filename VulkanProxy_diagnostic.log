@@ -1,0 +1,731 @@
+[52030656] === VulkanProxy v3 === Loaded system Loader: C:\Windows\system32\vulkan-1.dll
+[52030656] PROXY served via GIPA: vkCreateInstance
+[52030671] vkCreateInstance: apiVersion=1.4 extCount=0 layerCount=0
+[52030703] vkCreateInstance result=0
+[52030703] PROXY served via GIPA: vkQueueSubmit
+[52030703] PROXY served via GIPA: vkQueueWaitIdle
+[52030703] PROXY served via GIPA: vkAllocateMemory
+[52030703] PROXY served via GIPA: vkBindBufferMemory
+[52030703] PROXY served via GIPA: vkBindImageMemory
+[52030703] PROXY served via GIPA: vkGetBufferMemoryRequirements
+[52030703] PROXY served via GIPA: vkGetImageMemoryRequirements
+[52030703] PROXY served via GIPA: vkCreateFence
+[52030703] PROXY served via GIPA: vkWaitForFences
+[52030703] PROXY served via GIPA: vkCreateBuffer
+[52030703] PROXY served via GIPA: vkCreateImage
+[52030703] PROXY served via GIPA: vkCreateImageView
+[52030703] PROXY served via GIPA: vkDestroyImageView
+[52030703] PROXY served via GIPA: vkCreateShaderModule
+[52030703] PROXY served via GIPA: vkDestroyShaderModule
+[52030703] PROXY served via GIPA: vkCreateGraphicsPipelines
+[52030703] PROXY served via GIPA: vkCreateComputePipelines
+[52030703] PROXY served via GIPA: vkDestroyPipeline
+[52030703] PROXY served via GIPA: vkCreatePipelineLayout
+[52030703] PROXY served via GIPA: vkCreateSampler
+[52030703] PROXY served via GIPA: vkCreateDescriptorSetLayout
+[52030703] PROXY served via GIPA: vkCreateDescriptorPool
+[52030703] PROXY served via GIPA: vkAllocateDescriptorSets
+[52030703] PROXY served via GIPA: vkUpdateDescriptorSets
+[52030703] PROXY served via GIPA: vkCreateRenderPass
+[52030703] PROXY served via GIPA: vkCreateCommandPool
+[52030703] PROXY served via GIPA: vkAllocateCommandBuffers
+[52030703] PROXY served via GIPA: vkFreeCommandBuffers
+[52030703] PROXY served via GIPA: vkCmdBindPipeline
+[52030703] PROXY served via GIPA: vkCmdDraw
+[52030703] PROXY served via GIPA: vkCmdDrawIndexed
+[52030703] PROXY served via GIPA: vkCmdDrawIndirect
+[52030703] PROXY served via GIPA: vkCmdDrawIndexedIndirect
+[52030703] PROXY served via GIPA: vkCmdDispatch
+[52030703] PROXY served via GIPA: vkCmdDispatchIndirect
+[52030703] PROXY served via GIPA: vkCmdPipelineBarrier
+[52030703] PROXY served via GIPA: vkBindBufferMemory2
+[52030703] PROXY served via GIPA: vkBindImageMemory2
+[52030703] PROXY served via GIPA: vkGetImageMemoryRequirements2
+[52030703] PROXY served via GIPA: vkGetBufferMemoryRequirements2
+[52030703] PROXY served via GIPA: vkCmdDrawIndirectCount
+[52030703] PROXY served via GIPA: vkCmdDrawIndexedIndirectCount
+[52030703] PROXY served via GIPA: vkCreatePrivateDataSlot
+[52030703] PROXY served via GIPA: vkDestroyPrivateDataSlot
+[52030703] PROXY served via GIPA: vkSetPrivateData
+[52030703] PROXY served via GIPA: vkGetPrivateData
+[52030703] PROXY served via GIPA: vkCmdSetEvent2
+[52030703] PROXY served via GIPA: vkCmdResetEvent2
+[52030703] PROXY served via GIPA: vkCmdWaitEvents2
+[52030703] PROXY served via GIPA: vkCmdPipelineBarrier2
+[52030703] PROXY served via GIPA: vkCmdWriteTimestamp2
+[52030703] PROXY served via GIPA: vkQueueSubmit2
+[52030703] PROXY served via GIPA: vkCmdCopyBuffer2
+[52030703] PROXY served via GIPA: vkCmdCopyImage2
+[52030718] PROXY served via GIPA: vkCmdCopyBufferToImage2
+[52030718] PROXY served via GIPA: vkCmdCopyImageToBuffer2
+[52030718] PROXY served via GIPA: vkCmdBlitImage2
+[52030718] PROXY served via GIPA: vkCmdResolveImage2
+[52030718] PROXY served via GIPA: vkCmdBeginRendering
+[52030718] PROXY served via GIPA: vkCmdEndRendering
+[52030718] PROXY served via GIPA: vkCmdBindVertexBuffers2
+[52030718] PROXY served via GIPA: vkGetDeviceBufferMemoryRequirements
+[52030718] PROXY served via GIPA: vkGetDeviceImageMemoryRequirements
+[52030718] PROXY served via GIPA: vkGetDeviceImageSparseMemoryRequirements
+[52030718] PROXY served via GIPA: vkGetPhysicalDeviceSurfaceCapabilitiesKHR
+[52030718] PROXY served via GIPA: vkGetPhysicalDeviceSurfaceFormatsKHR
+[52030718] PROXY served via GIPA: vkGetPhysicalDeviceSurfacePresentModesKHR
+[52030718] PROXY served via GIPA: vkCreateSwapchainKHR
+[52030718] PROXY served via GIPA: vkQueuePresentKHR
+[52030718] PROXY served via GIPA: vkCmdBeginRenderingKHR
+[52030718] PROXY served via GIPA: vkCmdEndRenderingKHR
+[52030718] GIPA returned NULL for vkGetPhysicalDeviceExternalImageFormatPropertiesNV
+[52030718] PROXY served via alias vkGetPhysicalDeviceFormatProperties2KHR -> vkGetPhysicalDeviceFormatProperties2
+[52030718] PROXY served via alias vkGetPhysicalDeviceImageFormatProperties2KHR -> vkGetPhysicalDeviceImageFormatProperties2
+[52030718] PROXY served via alias vkGetPhysicalDeviceQueueFamilyProperties2KHR -> vkGetPhysicalDeviceQueueFamilyProperties2
+[52030718] PROXY served via alias vkGetPhysicalDeviceMemoryProperties2KHR -> vkGetPhysicalDeviceMemoryProperties2
+[52030718] PROXY served via alias vkGetPhysicalDeviceSparseImageFormatProperties2KHR -> vkGetPhysicalDeviceSparseImageFormatProperties2
+[52030718] PROXY served via alias vkEnumeratePhysicalDeviceGroupsKHR -> vkEnumeratePhysicalDeviceGroups
+[52030718] GIPA returned NULL for vkGetPhysicalDeviceExternalBufferPropertiesKHR
+[52030718] GIPA returned NULL for vkGetPhysicalDeviceExternalSemaphorePropertiesKHR
+[52030718] GIPA returned NULL for vkReleaseDisplayEXT
+[52030718] GIPA returned NULL for vkGetPhysicalDeviceSurfaceCapabilities2EXT
+[52030718] GIPA returned NULL for vkGetPhysicalDeviceExternalFencePropertiesKHR
+[52030718] PROXY served via GIPA: vkCreateAccelerationStructureKHR
+[52030718] PROXY served via GIPA: vkDestroyAccelerationStructureKHR
+[52030718] PROXY served via GIPA: vkCmdBuildAccelerationStructuresKHR
+[52030718] PROXY served via GIPA: vkCmdBuildAccelerationStructuresIndirectKHR
+[52030718] PROXY served via GIPA: vkBuildAccelerationStructuresKHR
+[52030718] PROXY served via GIPA: vkCopyAccelerationStructureKHR
+[52030718] PROXY served via GIPA: vkCopyAccelerationStructureToMemoryKHR
+[52030718] PROXY served via GIPA: vkCopyMemoryToAccelerationStructureKHR
+[52030718] PROXY served via GIPA: vkWriteAccelerationStructuresPropertiesKHR
+[52030718] PROXY served via GIPA: vkCmdCopyAccelerationStructureKHR
+[52030718] PROXY served via GIPA: vkCmdCopyAccelerationStructureToMemoryKHR
+[52030718] PROXY served via GIPA: vkCmdCopyMemoryToAccelerationStructureKHR
+[52030718] PROXY served via GIPA: vkGetAccelerationStructureDeviceAddressKHR
+[52030718] PROXY served via GIPA: vkCmdWriteAccelerationStructuresPropertiesKHR
+[52030718] PROXY served via GIPA: vkGetDeviceAccelerationStructureCompatibilityKHR
+[52030718] PROXY served via GIPA: vkGetAccelerationStructureBuildSizesKHR
+[52030718] PROXY served via GIPA: vkCmdTraceRaysKHR
+[52030718] PROXY served via GIPA: vkCreateRayTracingPipelinesKHR
+[52030718] PROXY served via GIPA: vkGetRayTracingShaderGroupHandlesKHR
+[52030718] PROXY served via GIPA: vkGetRayTracingCaptureReplayShaderGroupHandlesKHR
+[52030718] PROXY served via GIPA: vkCmdTraceRaysIndirectKHR
+[52030718] PROXY served via GIPA: vkGetRayTracingShaderGroupStackSizeKHR
+[52030718] PROXY served via GIPA: vkCmdSetRayTracingPipelineStackSizeKHR
+[52030718] PROXY served via GIPA: vkCmdDrawIndirectCountKHR
+[52030718] PROXY served via GIPA: vkCmdDrawIndexedIndirectCountKHR
+[52030718] PROXY served via GIPA: vkCreateDeferredOperationKHR
+[52030718] PROXY served via GIPA: vkDestroyDeferredOperationKHR
+[52030718] PROXY served via GIPA: vkGetDeferredOperationMaxConcurrencyKHR
+[52030718] PROXY served via GIPA: vkGetDeferredOperationResultKHR
+[52030718] PROXY served via GIPA: vkDeferredOperationJoinKHR
+[52030718] GIPA returned NULL for vkAcquireDrmDisplayEXT
+[52030718] GIPA returned NULL for vkGetDrmDisplayEXT
+[52030718] PROXY served via GIPA: vkCmdSetEvent2KHR
+[52030718] PROXY served via GIPA: vkCmdResetEvent2KHR
+[52030718] PROXY served via GIPA: vkCmdWaitEvents2KHR
+[52030718] PROXY served via GIPA: vkCmdPipelineBarrier2KHR
+[52030718] PROXY served via GIPA: vkCmdWriteTimestamp2KHR
+[52030718] PROXY served via GIPA: vkQueueSubmit2KHR
+[52030718] PROXY served via GIPA: vkCmdCopyBuffer2KHR
+[52030718] PROXY served via GIPA: vkCmdCopyImage2KHR
+[52030718] PROXY served via GIPA: vkCmdCopyBufferToImage2KHR
+[52030718] PROXY served via GIPA: vkCmdCopyImageToBuffer2KHR
+[52030718] PROXY served via GIPA: vkCmdBlitImage2KHR
+[52030718] PROXY served via GIPA: vkCmdResolveImage2KHR
+[52030718] PROXY served via GIPA: vkCmdTraceRaysIndirect2KHR
+[52030718] GPU: name="AMD Radeon R7 200 Series" vendor=0x1002 device=0x6658 type=2 driverVersion=0x008000BC apiVersion(real)=1.2.178
+[52030718] SPOOF: apiVersion 1.2 -> 1.3
+[52030718] REAL device extensions (107):
+[52030718]     VK_KHR_16bit_storage v1
+[52030718]     VK_KHR_8bit_storage v1
+[52030718]     VK_KHR_bind_memory2 v1
+[52030718]     VK_KHR_buffer_device_address v1
+[52030718]     VK_KHR_create_renderpass2 v1
+[52030718]     VK_KHR_dedicated_allocation v3
+[52030718]     VK_KHR_depth_stencil_resolve v1
+[52030718]     VK_KHR_descriptor_update_template v1
+[52030718]     VK_KHR_device_group v4
+[52030718]     VK_KHR_draw_indirect_count v1
+[52030718]     VK_KHR_driver_properties v1
+[52030718]     VK_KHR_external_fence v1
+[52030718]     VK_KHR_external_fence_win32 v1
+[52030718]     VK_KHR_external_memory v1
+[52030718]     VK_KHR_external_memory_win32 v1
+[52030718]     VK_KHR_external_semaphore v1
+[52030718]     VK_KHR_external_semaphore_win32 v1
+[52030718]     VK_KHR_get_memory_requirements2 v1
+[52030718]     VK_KHR_imageless_framebuffer v1
+[52030718]     VK_KHR_image_format_list v1
+[52030718]     VK_KHR_maintenance1 v2
+[52030718]     VK_KHR_maintenance2 v1
+[52030718]     VK_KHR_maintenance3 v1
+[52030718]     VK_KHR_multiview v1
+[52030718]     VK_KHR_pipeline_executable_properties v1
+[52030718]     VK_KHR_relaxed_block_layout v1
+[52030718]     VK_KHR_sampler_mirror_clamp_to_edge v3
+[52030718]     VK_KHR_sampler_ycbcr_conversion v14
+[52030734]     VK_KHR_separate_depth_stencil_layouts v1
+[52030734]     VK_KHR_shader_atomic_int64 v1
+[52030734]     VK_KHR_shader_clock v1
+[52030734]     VK_KHR_shader_draw_parameters v1
+[52030734]     VK_KHR_shader_float16_int8 v1
+[52030734]     VK_KHR_shader_float_controls v4
+[52030734]     VK_KHR_shader_non_semantic_info v1
+[52030734]     VK_KHR_shader_subgroup_extended_types v1
+[52030734]     VK_KHR_shader_subgroup_uniform_control_flow v4
+[52030734]     VK_KHR_shader_terminate_invocation v1
+[52030734]     VK_KHR_spirv_1_4 v1
+[52030734]     VK_KHR_storage_buffer_storage_class v1
+[52030734]     VK_KHR_swapchain v70
+[52030734]     VK_KHR_swapchain_mutable_format v1
+[52030734]     VK_KHR_synchronization2 v1
+[52030734]     VK_KHR_timeline_semaphore v2
+[52030734]     VK_KHR_uniform_buffer_standard_layout v1
+[52030734]     VK_KHR_variable_pointers v1
+[52030734]     VK_KHR_vulkan_memory_model v3
+[52030734]     VK_KHR_win32_keyed_mutex v1
+[52030734]     VK_EXT_4444_formats v1
+[52030734]     VK_EXT_calibrated_timestamps v2
+[52030734]     VK_EXT_color_write_enable v1
+[52030734]     VK_EXT_custom_border_color v12
+[52030734]     VK_EXT_depth_clip_enable v1
+[52030734]     VK_EXT_depth_range_unrestricted v1
+[52030734]     VK_EXT_descriptor_indexing v2
+[52030734]     VK_EXT_extended_dynamic_state v1
+[52030734]     VK_EXT_external_memory_host v1
+[52030734]     VK_EXT_full_screen_exclusive v4
+[52030734]     VK_EXT_global_priority v2
+[52030734]     VK_EXT_hdr_metadata v2
+[52030734]     VK_EXT_host_query_reset v1
+[52030734]     VK_EXT_image_robustness v1
+[52030734]     VK_EXT_inline_uniform_block v1
+[52030734]     VK_EXT_line_rasterization v1
+[52030734]     VK_EXT_memory_budget v1
+[52030734]     VK_EXT_memory_priority v1
+[52030734]     VK_EXT_pipeline_creation_cache_control v3
+[52030734]     VK_EXT_pipeline_creation_feedback v1
+[52030734]     VK_EXT_private_data v1
+[52030734]     VK_EXT_queue_family_foreign v1
+[52030734]     VK_EXT_robustness2 v1
+[52030734]     VK_EXT_sampler_filter_minmax v2
+[52030734]     VK_EXT_sample_locations v1
+[52030734]     VK_EXT_scalar_block_layout v1
+[52030734]     VK_EXT_separate_stencil_usage v1
+[52030734]     VK_EXT_shader_demote_to_helper_invocation v1
+[52030734]     VK_EXT_shader_image_atomic_int64 v1
+[52030734]     VK_EXT_shader_stencil_export v1
+[52030734]     VK_EXT_shader_subgroup_ballot v1
+[52030734]     VK_EXT_shader_subgroup_vote v1
+[52030734]     VK_EXT_shader_viewport_index_layer v1
+[52030734]     VK_EXT_subgroup_size_control v2
+[52030734]     VK_EXT_texel_buffer_alignment v1
+[52030734]     VK_EXT_tooling_info v1
+[52030734]     VK_EXT_transform_feedback v1
+[52030734]     VK_EXT_vertex_attribute_divisor v3
+[52030734]     VK_AMD_buffer_marker v1
+[52030734]     VK_AMD_calibrated_timestamps v1
+[52030734]     VK_AMD_display_native_hdr v1
+[52030734]     VK_AMD_draw_indirect_count v2
+[52030734]     VK_AMD_gcn_shader v1
+[52030734]     VK_AMD_gpa_interface v1
+[52030734]     VK_AMD_memory_overallocation_behavior v1
+[52030734]     VK_AMD_mixed_attachment_samples v1
+[52030734]     VK_AMD_pipeline_compiler_control v1
+[52030734]     VK_AMD_shader_ballot v1
+[52030734]     VK_AMD_shader_core_properties v2
+[52030734]     VK_AMD_shader_core_properties2 v1
+[52030734]     VK_AMD_shader_explicit_vertex_parameter v1
+[52030734]     VK_AMD_shader_fragment_mask v1
+[52030734]     VK_AMD_shader_image_load_store_lod v1
+[52030734]     VK_AMD_shader_info v1
+[52030734]     VK_AMD_shader_trinary_minmax v1
+[52030734]     VK_AMD_wave_limits v1
+[52030734]     VK_GOOGLE_decorate_string v1
+[52030734]     VK_GOOGLE_hlsl_functionality1 v1
+[52030734]     VK_GOOGLE_user_type v1
+[52030734] Features2 requests sType=51 Vulkan12Features
+[52030734] REAL Vulkan12Features: shaderFloat16=0 shaderInt8=1 storageBuffer8BitAccess=1 bufferDeviceAddress=1 descriptorIndexing=1 timelineSemaphore=1 scalarBlockLayout=1
+[52030734] SPOOF: Vulkan12Features.shaderFloat16 0 -> 1 (will rewrite fp16 shaders to fp32)
+[52030734] Features2 requests sType=53 Vulkan13Features
+[52030734] REAL Vulkan13Features: dynamicRendering=0 synchronization2=0 maintenance4=0 subgroupSizeControl=0 computeFullSubgroups=0 shaderIntegerDotProduct=0
+[52030750] vkCreateInstance: apiVersion=1.3 extCount=5 layerCount=0
+[52030750]   INSTANCE EXT: VK_KHR_surface
+[52030750]   INSTANCE EXT: VK_KHR_win32_surface
+[52030750]   INSTANCE EXT: VK_KHR_get_surface_capabilities2
+[52030750]   INSTANCE EXT: VK_KHR_get_physical_device_properties2
+[52030750]   INSTANCE EXT: VK_EXT_swapchain_colorspace
+[52031234] vkCreateInstance result=0
+[52031234] PROXY served via GIPA: vkCreateWin32SurfaceKHR
+[52031234] GPU: name="AMD Radeon R7 200 Series" vendor=0x1002 device=0x6658 type=2 driverVersion=0x008000BC apiVersion(real)=1.2.178
+[52031234] REAL device extensions (107):
+[52031234]     VK_KHR_16bit_storage v1
+[52031234]     VK_KHR_8bit_storage v1
+[52031234]     VK_KHR_bind_memory2 v1
+[52031234]     VK_KHR_buffer_device_address v1
+[52031234]     VK_KHR_create_renderpass2 v1
+[52031234]     VK_KHR_dedicated_allocation v3
+[52031234]     VK_KHR_depth_stencil_resolve v1
+[52031234]     VK_KHR_descriptor_update_template v1
+[52031234]     VK_KHR_device_group v4
+[52031234]     VK_KHR_draw_indirect_count v1
+[52031234]     VK_KHR_driver_properties v1
+[52031234]     VK_KHR_external_fence v1
+[52031234]     VK_KHR_external_fence_win32 v1
+[52031234]     VK_KHR_external_memory v1
+[52031234]     VK_KHR_external_memory_win32 v1
+[52031234]     VK_KHR_external_semaphore v1
+[52031234]     VK_KHR_external_semaphore_win32 v1
+[52031234]     VK_KHR_get_memory_requirements2 v1
+[52031234]     VK_KHR_imageless_framebuffer v1
+[52031234]     VK_KHR_image_format_list v1
+[52031234]     VK_KHR_maintenance1 v2
+[52031234]     VK_KHR_maintenance2 v1
+[52031234]     VK_KHR_maintenance3 v1
+[52031234]     VK_KHR_multiview v1
+[52031234]     VK_KHR_pipeline_executable_properties v1
+[52031234]     VK_KHR_relaxed_block_layout v1
+[52031234]     VK_KHR_sampler_mirror_clamp_to_edge v3
+[52031234]     VK_KHR_sampler_ycbcr_conversion v14
+[52031234]     VK_KHR_separate_depth_stencil_layouts v1
+[52031234]     VK_KHR_shader_atomic_int64 v1
+[52031234]     VK_KHR_shader_clock v1
+[52031234]     VK_KHR_shader_draw_parameters v1
+[52031234]     VK_KHR_shader_float16_int8 v1
+[52031234]     VK_KHR_shader_float_controls v4
+[52031234]     VK_KHR_shader_non_semantic_info v1
+[52031234]     VK_KHR_shader_subgroup_extended_types v1
+[52031234]     VK_KHR_shader_subgroup_uniform_control_flow v4
+[52031234]     VK_KHR_shader_terminate_invocation v1
+[52031234]     VK_KHR_spirv_1_4 v1
+[52031234]     VK_KHR_storage_buffer_storage_class v1
+[52031234]     VK_KHR_swapchain v70
+[52031234]     VK_KHR_swapchain_mutable_format v1
+[52031234]     VK_KHR_synchronization2 v1
+[52031234]     VK_KHR_timeline_semaphore v2
+[52031234]     VK_KHR_uniform_buffer_standard_layout v1
+[52031234]     VK_KHR_variable_pointers v1
+[52031234]     VK_KHR_vulkan_memory_model v3
+[52031234]     VK_KHR_win32_keyed_mutex v1
+[52031234]     VK_EXT_4444_formats v1
+[52031234]     VK_EXT_calibrated_timestamps v2
+[52031234]     VK_EXT_color_write_enable v1
+[52031234]     VK_EXT_custom_border_color v12
+[52031234]     VK_EXT_depth_clip_enable v1
+[52031234]     VK_EXT_depth_range_unrestricted v1
+[52031234]     VK_EXT_descriptor_indexing v2
+[52031234]     VK_EXT_extended_dynamic_state v1
+[52031234]     VK_EXT_external_memory_host v1
+[52031234]     VK_EXT_full_screen_exclusive v4
+[52031234]     VK_EXT_global_priority v2
+[52031234]     VK_EXT_hdr_metadata v2
+[52031234]     VK_EXT_host_query_reset v1
+[52031234]     VK_EXT_image_robustness v1
+[52031234]     VK_EXT_inline_uniform_block v1
+[52031234]     VK_EXT_line_rasterization v1
+[52031250]     VK_EXT_memory_budget v1
+[52031250]     VK_EXT_memory_priority v1
+[52031250]     VK_EXT_pipeline_creation_cache_control v3
+[52031250]     VK_EXT_pipeline_creation_feedback v1
+[52031250]     VK_EXT_private_data v1
+[52031250]     VK_EXT_queue_family_foreign v1
+[52031250]     VK_EXT_robustness2 v1
+[52031250]     VK_EXT_sampler_filter_minmax v2
+[52031250]     VK_EXT_sample_locations v1
+[52031250]     VK_EXT_scalar_block_layout v1
+[52031250]     VK_EXT_separate_stencil_usage v1
+[52031250]     VK_EXT_shader_demote_to_helper_invocation v1
+[52031250]     VK_EXT_shader_image_atomic_int64 v1
+[52031250]     VK_EXT_shader_stencil_export v1
+[52031250]     VK_EXT_shader_subgroup_ballot v1
+[52031250]     VK_EXT_shader_subgroup_vote v1
+[52031250]     VK_EXT_shader_viewport_index_layer v1
+[52031250]     VK_EXT_subgroup_size_control v2
+[52031250]     VK_EXT_texel_buffer_alignment v1
+[52031250]     VK_EXT_tooling_info v1
+[52031250]     VK_EXT_transform_feedback v1
+[52031250]     VK_EXT_vertex_attribute_divisor v3
+[52031250]     VK_AMD_buffer_marker v1
+[52031250]     VK_AMD_calibrated_timestamps v1
+[52031250]     VK_AMD_display_native_hdr v1
+[52031250]     VK_AMD_draw_indirect_count v2
+[52031250]     VK_AMD_gcn_shader v1
+[52031250]     VK_AMD_gpa_interface v1
+[52031250]     VK_AMD_memory_overallocation_behavior v1
+[52031250]     VK_AMD_mixed_attachment_samples v1
+[52031250]     VK_AMD_pipeline_compiler_control v1
+[52031250]     VK_AMD_shader_ballot v1
+[52031250]     VK_AMD_shader_core_properties v2
+[52031250]     VK_AMD_shader_core_properties2 v1
+[52031250]     VK_AMD_shader_explicit_vertex_parameter v1
+[52031250]     VK_AMD_shader_fragment_mask v1
+[52031250]     VK_AMD_shader_image_load_store_lod v1
+[52031250]     VK_AMD_shader_info v1
+[52031250]     VK_AMD_shader_trinary_minmax v1
+[52031250]     VK_AMD_wave_limits v1
+[52031250]     VK_GOOGLE_decorate_string v1
+[52031250]     VK_GOOGLE_hlsl_functionality1 v1
+[52031250]     VK_GOOGLE_user_type v1
+[52031250] Properties2 requests sType=1000094000 SubgroupProperties
+[52031250] Properties2 requests sType=1000196000 
+[52031250] Properties2 requests sType=1000225000 
+[52031250] SPOOF: subgroup supportedStages 0x3F -> 0xF3F (size=64 ops=0xFF)
+[52031250] Features2 requests sType=49 Vulkan11Features
+[52031250] Features2 requests sType=1000226003 
+[52031250] REAL Vulkan11Features: storageBuffer16BitAccess=1 uniformAndStorageBuffer16BitAccess=1 storagePushConstant16=0 storageInputOutput16=0 multiview=1 shaderDrawParameters=1
+[52031250] vkCreateDevice: app requests 12 extensions
+[52031250]   REQUESTED EXT: VK_KHR_swapchain
+[52031250]   REQUESTED EXT: VK_AMD_shader_trinary_minmax
+[52031250]   REQUESTED EXT: VK_AMD_gcn_shader
+[52031250]   REQUESTED EXT: VK_AMD_shader_explicit_vertex_parameter
+[52031250]   REQUESTED EXT: VK_EXT_shader_subgroup_ballot
+[52031250]   REQUESTED EXT: VK_EXT_memory_budget
+[52031250]   REQUESTED EXT: VK_EXT_subgroup_size_control
+[52031250]   REQUESTED EXT: VK_EXT_calibrated_timestamps
+[52031250]   REQUESTED EXT: VK_EXT_hdr_metadata
+[52031250]   REQUESTED EXT: VK_AMD_memory_overallocation_behavior
+[52031250]   REQUESTED EXT: VK_EXT_full_screen_exclusive
+[52031250]   REQUESTED EXT: VK_KHR_get_memory_requirements2
+[52031250] DeviceCreateInfo requests sType=1000059000 Features2
+[52031250] DeviceCreateInfo requests sType=49 Vulkan11Features
+[52031250] DeviceCreateInfo requests sType=51 Vulkan12Features
+[52031250] DeviceCreateInfo requests sType=53 Vulkan13Features
+[52031250] DeviceCreateInfo requests sType=1000189000 
+[52031250]   ADDED EXT: VK_EXT_extended_dynamic_state (backs the Vulkan 1.3 dynamic-state commands)
+[52031250]     CLEARED Features2.features.shaderInt16 (driver lacks it)
+[52031250]     CLEARED Vulkan12Features.shaderFloat16 (driver lacks it)
+[52031250]   PRESERVED feature struct sType=53 Vulkan13Features (proxy-emulated)
+[52031328] vkCreateDevice (sanitized) result=0
+[52031328] dynamic-state vkCmdSetCullMode -> real driver function
+[52031328] dynamic-state vkCmdSetFrontFace -> real driver function
+[52031328] dynamic-state vkCmdSetPrimitiveTopology -> real driver function
+[52031328] dynamic-state vkCmdSetViewportWithCount -> real driver function
+[52031328] dynamic-state vkCmdSetScissorWithCount -> real driver function
+[52031328] dynamic-state vkCmdSetDepthTestEnable -> real driver function
+[52031328] dynamic-state vkCmdSetDepthWriteEnable -> real driver function
+[52031328] dynamic-state vkCmdSetDepthCompareOp -> real driver function
+[52031328] dynamic-state vkCmdSetDepthBoundsTestEnable -> real driver function
+[52031328] dynamic-state vkCmdSetStencilTestEnable -> real driver function
+[52031328] dynamic-state vkCmdSetStencilOp -> real driver function
+[52031328] !!! dynamic-state vkCmdSetRasterizerDiscardEnable unavailable on the real driver -> NO-OP (pipeline static state is used)
+[52031328] !!! dynamic-state vkCmdSetDepthBiasEnable unavailable on the real driver -> NO-OP (pipeline static state is used)
+[52031328] !!! dynamic-state vkCmdSetPrimitiveRestartEnable unavailable on the real driver -> NO-OP (pipeline static state is used)
+[52031328] [v3.2] vkDebugMarkerSetObjectTagEXT -> stub returning VK_SUCCESS
+[52031328] [v3.2] vkDebugMarkerSetObjectNameEXT -> stub returning VK_SUCCESS
+[52031328] [v3.2] vkCmdDebugMarkerBeginEXT -> no-op stub
+[52031328] [v3.2] vkCmdDebugMarkerEndEXT -> no-op stub
+[52031328] [v3.2] vkCmdDebugMarkerInsertEXT -> no-op stub
+[52031328] GDPA returned NULL for vkCreateVideoSessionKHR (real driver lacks it)
+[52031328] GDPA returned NULL for vkDestroyVideoSessionKHR (real driver lacks it)
+[52031328] GDPA returned NULL for vkGetVideoSessionMemoryRequirementsKHR (real driver lacks it)
+[52031328] GDPA returned NULL for vkBindVideoSessionMemoryKHR (real driver lacks it)
+[52031328] GDPA returned NULL for vkCreateVideoSessionParametersKHR (real driver lacks it)
+[52031328] GDPA returned NULL for vkUpdateVideoSessionParametersKHR (real driver lacks it)
+[52031328] GDPA returned NULL for vkDestroyVideoSessionParametersKHR (real driver lacks it)
+[52031328] !!! vkCmdBeginVideoCodingKHR unresolved -> NO-OP stub (EXEC@0 guard)
+[52031328] !!! vkCmdEndVideoCodingKHR unresolved -> NO-OP stub (EXEC@0 guard)
+[52031328] !!! vkCmdControlVideoCodingKHR unresolved -> NO-OP stub (EXEC@0 guard)
+[52031328] !!! vkCmdDecodeVideoKHR unresolved -> NO-OP stub (EXEC@0 guard)
+[52031328] !!! vkCmdBindTransformFeedbackBuffersEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031328] !!! vkCmdBeginTransformFeedbackEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031343] !!! vkCmdEndTransformFeedbackEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031343] !!! vkCmdBeginQueryIndexedEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031343] !!! vkCmdEndQueryIndexedEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031343] !!! vkCmdDrawIndirectByteCountEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031343] GDPA returned NULL for vkCreateCuModuleNVX (real driver lacks it)
+[52031343] GDPA returned NULL for vkCreateCuFunctionNVX (real driver lacks it)
+[52031343] GDPA returned NULL for vkDestroyCuModuleNVX (real driver lacks it)
+[52031343] GDPA returned NULL for vkDestroyCuFunctionNVX (real driver lacks it)
+[52031343] GDPA returned NULL for vkCmdCuLaunchKernelNVX (real driver lacks it)
+[52031343] GDPA returned NULL for vkGetImageViewHandleNVX (real driver lacks it)
+[52031343] GDPA returned NULL for vkGetImageViewAddressNVX (real driver lacks it)
+[52031343] GDPA returned NULL for vkCmdDrawIndirectCountAMD (real driver lacks it)
+[52031343] GDPA returned NULL for vkCmdDrawIndexedIndirectCountAMD (real driver lacks it)
+[52031343] GDPA returned NULL for vkGetShaderInfoAMD (real driver lacks it)
+[52031343] PROXY served via suffix-strip vkGetDeviceGroupPeerMemoryFeaturesKHR -> vkGetDeviceGroupPeerMemoryFeatures
+[52031343] PROXY served via alias vkCmdSetDeviceMaskKHR -> vkCmdSetDeviceMask
+[52031343] PROXY served via suffix-strip vkCmdDispatchBaseKHR -> vkCmdDispatchBase
+[52031343] PROXY served via suffix-strip vkTrimCommandPoolKHR -> vkTrimCommandPool
+[52031343] GDPA returned NULL for vkGetMemoryFdKHR (real driver lacks it)
+[52031343] GDPA returned NULL for vkGetMemoryFdPropertiesKHR (real driver lacks it)
+[52031343] GDPA returned NULL for vkImportSemaphoreFdKHR (real driver lacks it)
+[52031343] GDPA returned NULL for vkGetSemaphoreFdKHR (real driver lacks it)
+[52031343] PROXY served via alias vkCmdPushDescriptorSetKHR -> vkCmdPushDescriptorSet
+[52031343] PROXY served via alias vkCmdPushDescriptorSetWithTemplateKHR -> vkCmdPushDescriptorSet
+[52031343] !!! vkCmdBeginConditionalRenderingEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031343] !!! vkCmdEndConditionalRenderingEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031343] PROXY served via suffix-strip vkCreateDescriptorUpdateTemplateKHR -> vkCreateDescriptorUpdateTemplate
+[52031343] PROXY served via suffix-strip vkDestroyDescriptorUpdateTemplateKHR -> vkDestroyDescriptorUpdateTemplate
+[52031343] PROXY served via suffix-strip vkUpdateDescriptorSetWithTemplateKHR -> vkUpdateDescriptorSetWithTemplate
+[52031343] !!! MISSING dynamic-state vkCmdSetViewportWScalingNV -> NO-OP (state NOT applied!)
+[52031343] GDPA returned NULL for vkDisplayPowerControlEXT (real driver lacks it)
+[52031343] GDPA returned NULL for vkRegisterDeviceEventEXT (real driver lacks it)
+[52031343] GDPA returned NULL for vkRegisterDisplayEventEXT (real driver lacks it)
+[52031343] GDPA returned NULL for vkGetSwapchainCounterEXT (real driver lacks it)
+[52031343] GDPA returned NULL for vkGetRefreshCycleDurationGOOGLE (real driver lacks it)
+[52031343] GDPA returned NULL for vkGetPastPresentationTimingGOOGLE (real driver lacks it)
+[52031343] !!! MISSING dynamic-state vkCmdSetDiscardRectangleEXT -> NO-OP (state NOT applied!)
+[52031343] !!! MISSING dynamic-state vkCmdSetDiscardRectangleEnableEXT -> NO-OP (state NOT applied!)
+[52031343] !!! MISSING dynamic-state vkCmdSetDiscardRectangleModeEXT -> NO-OP (state NOT applied!)
+[52031343] PROXY served via alias vkCreateRenderPass2KHR -> vkCreateRenderPass2
+[52031343] PROXY served via alias vkCmdBeginRenderPass2KHR -> vkCmdBeginRenderPass2
+[52031343] PROXY served via alias vkCmdNextSubpass2KHR -> vkCmdNextSubpass2
+[52031343] PROXY served via alias vkCmdEndRenderPass2KHR -> vkCmdEndRenderPass2
+[52031343] GDPA returned NULL for vkGetSwapchainStatusKHR (real driver lacks it)
+[52031343] GDPA returned NULL for vkImportFenceFdKHR (real driver lacks it)
+[52031343] GDPA returned NULL for vkGetFenceFdKHR (real driver lacks it)
+[52031343] GDPA returned NULL for vkAcquireProfilingLockKHR (real driver lacks it)
+[52031343] GDPA returned NULL for vkReleaseProfilingLockKHR (real driver lacks it)
+[52031343] !!! MISSING dynamic-state vkCmdSetSampleLocationsEXT -> NO-OP (state NOT applied!)
+[52031343] PROXY served via suffix-strip vkCreateSamplerYcbcrConversionKHR -> vkCreateSamplerYcbcrConversion
+[52031343] PROXY served via suffix-strip vkDestroySamplerYcbcrConversionKHR -> vkDestroySamplerYcbcrConversion
+[52031343] PROXY served via alias vkBindBufferMemory2KHR -> vkBindBufferMemory2
+[52031343] PROXY served via alias vkBindImageMemory2KHR -> vkBindImageMemory2
+[52031343] GDPA returned NULL for vkGetImageDrmFormatModifierPropertiesEXT (real driver lacks it)
+[52031343] GDPA returned NULL for vkCreateValidationCacheEXT (real driver lacks it)
+[52031343] GDPA returned NULL for vkDestroyValidationCacheEXT (real driver lacks it)
+[52031343] GDPA returned NULL for vkMergeValidationCachesEXT (real driver lacks it)
+[52031343] GDPA returned NULL for vkGetValidationCacheDataEXT (real driver lacks it)
+[52031343] GDPA returned NULL for vkCmdBindShadingRateImageNV (real driver lacks it)
+[52031343] !!! MISSING dynamic-state vkCmdSetViewportShadingRatePaletteNV -> NO-OP (state NOT applied!)
+[52031343] !!! MISSING dynamic-state vkCmdSetCoarseSampleOrderNV -> NO-OP (state NOT applied!)
+[52031343] GDPA returned NULL for vkCreateAccelerationStructureNV (real driver lacks it)
+[52031343] GDPA returned NULL for vkDestroyAccelerationStructureNV (real driver lacks it)
+[52031343] GDPA returned NULL for vkGetAccelerationStructureMemoryRequirementsNV (real driver lacks it)
+[52031343] GDPA returned NULL for vkBindAccelerationStructureMemoryNV (real driver lacks it)
+[52031343] GDPA returned NULL for vkCmdBuildAccelerationStructureNV (real driver lacks it)
+[52031343] GDPA returned NULL for vkCmdCopyAccelerationStructureNV (real driver lacks it)
+[52031343] GDPA returned NULL for vkCmdTraceRaysNV (real driver lacks it)
+[52031343] GDPA returned NULL for vkCreateRayTracingPipelinesNV (real driver lacks it)
+[52031343] GDPA returned NULL for vkGetRayTracingShaderGroupHandlesNV (real driver lacks it)
+[52031343] GDPA returned NULL for vkGetAccelerationStructureHandleNV (real driver lacks it)
+[52031343] GDPA returned NULL for vkCmdWriteAccelerationStructuresPropertiesNV (real driver lacks it)
+[52031343] GDPA returned NULL for vkCompileDeferredNV (real driver lacks it)
+[52031343] PROXY served via alias vkGetDescriptorSetLayoutSupportKHR -> vkGetDescriptorSetLayoutSupport
+[52031343] GDPA returned NULL for vkGetMemoryHostPointerPropertiesEXT (real driver lacks it)
+[52031343] GDPA returned NULL for vkCmdDrawMeshTasksNV (real driver lacks it)
+[52031343] GDPA returned NULL for vkCmdDrawMeshTasksIndirectNV (real driver lacks it)
+[52031343] GDPA returned NULL for vkCmdDrawMeshTasksIndirectCountNV (real driver lacks it)
+[52031343] !!! MISSING dynamic-state vkCmdSetExclusiveScissorEnableNV -> NO-OP (state NOT applied!)
+[52031343] !!! MISSING dynamic-state vkCmdSetExclusiveScissorNV -> NO-OP (state NOT applied!)
+[52031343] !!! MISSING dynamic-state vkCmdSetCheckpointNV -> NO-OP (state NOT applied!)
+[52031343] GDPA returned NULL for vkGetQueueCheckpointDataNV (real driver lacks it)
+[52031343] PROXY served via alias vkGetSemaphoreCounterValueKHR -> vkGetSemaphoreCounterValue
+[52031343] PROXY served via alias vkWaitSemaphoresKHR -> vkWaitSemaphores
+[52031343] PROXY served via alias vkSignalSemaphoreKHR -> vkSignalSemaphore
+[52031343] GDPA returned NULL for vkInitializePerformanceApiINTEL (real driver lacks it)
+[52031343] GDPA returned NULL for vkUninitializePerformanceApiINTEL (real driver lacks it)
+[52031343] !!! MISSING dynamic-state vkCmdSetPerformanceMarkerINTEL -> NO-OP (state NOT applied!)
+[52031343] !!! MISSING dynamic-state vkCmdSetPerformanceStreamMarkerINTEL -> NO-OP (state NOT applied!)
+[52031343] !!! MISSING dynamic-state vkCmdSetPerformanceOverrideINTEL -> NO-OP (state NOT applied!)
+[52031343] GDPA returned NULL for vkAcquirePerformanceConfigurationINTEL (real driver lacks it)
+[52031343] GDPA returned NULL for vkReleasePerformanceConfigurationINTEL (real driver lacks it)
+[52031343] GDPA returned NULL for vkQueueSetPerformanceConfigurationINTEL (real driver lacks it)
+[52031343] GDPA returned NULL for vkGetPerformanceParameterINTEL (real driver lacks it)
+[52031343] GDPA returned NULL for vkSetLocalDimmingAMD (real driver lacks it)
+[52031343] !!! MISSING dynamic-state vkCmdSetFragmentShadingRateKHR -> NO-OP (state NOT applied!)
+[52031343] PROXY served via suffix-strip vkGetBufferDeviceAddressEXT -> vkGetBufferDeviceAddress
+[52031343] GDPA returned NULL for vkWaitForPresentKHR (real driver lacks it)
+[52031343] PROXY served via suffix-strip vkGetBufferDeviceAddressKHR -> vkGetBufferDeviceAddress
+[52031343] PROXY served via alias vkGetBufferOpaqueCaptureAddressKHR -> vkGetBufferOpaqueCaptureAddress
+[52031343] PROXY served via alias vkGetDeviceMemoryOpaqueCaptureAddressKHR -> vkGetDeviceMemoryOpaqueCaptureAddress
+[52031343] !!! MISSING dynamic-state vkCmdSetLineStippleEXT -> NO-OP (state NOT applied!)
+[52031343] PROXY served via alias vkResetQueryPoolEXT -> vkResetQueryPool
+[52031343] dynamic-state vkCmdSetCullModeEXT -> real driver function
+[52031343] dynamic-state vkCmdSetFrontFaceEXT -> real driver function
+[52031343] dynamic-state vkCmdSetPrimitiveTopologyEXT -> real driver function
+[52031343] dynamic-state vkCmdSetViewportWithCountEXT -> real driver function
+[52031343] dynamic-state vkCmdSetScissorWithCountEXT -> real driver function
+[52031343] dynamic-state vkCmdSetDepthTestEnableEXT -> real driver function
+[52031343] dynamic-state vkCmdSetDepthWriteEnableEXT -> real driver function
+[52031343] dynamic-state vkCmdSetDepthCompareOpEXT -> real driver function
+[52031343] dynamic-state vkCmdSetDepthBoundsTestEnableEXT -> real driver function
+[52031343] dynamic-state vkCmdSetStencilTestEnableEXT -> real driver function
+[52031343] dynamic-state vkCmdSetStencilOpEXT -> real driver function
+[52031343] GDPA returned NULL for vkGetPipelineExecutablePropertiesKHR (real driver lacks it)
+[52031343] GDPA returned NULL for vkGetPipelineExecutableStatisticsKHR (real driver lacks it)
+[52031343] GDPA returned NULL for vkGetPipelineExecutableInternalRepresentationsKHR (real driver lacks it)
+[52031343] GDPA returned NULL for vkCopyMemoryToImageEXT (real driver lacks it)
+[52031343] GDPA returned NULL for vkCopyImageToMemoryEXT (real driver lacks it)
+[52031343] GDPA returned NULL for vkCopyImageToImageEXT (real driver lacks it)
+[52031343] GDPA returned NULL for vkTransitionImageLayoutEXT (real driver lacks it)
+[52031359] GDPA returned NULL for vkGetImageSubresourceLayout2EXT (real driver lacks it)
+[52031359] GDPA returned NULL for vkMapMemory2KHR (real driver lacks it)
+[52031359] GDPA returned NULL for vkUnmapMemory2KHR (real driver lacks it)
+[52031359] GDPA returned NULL for vkReleaseSwapchainImagesEXT (real driver lacks it)
+[52031359] GDPA returned NULL for vkGetGeneratedCommandsMemoryRequirementsNV (real driver lacks it)
+[52031359] GDPA returned NULL for vkCmdPreprocessGeneratedCommandsNV (real driver lacks it)
+[52031359] GDPA returned NULL for vkCmdExecuteGeneratedCommandsNV (real driver lacks it)
+[52031359] GDPA returned NULL for vkCmdBindPipelineShaderGroupNV (real driver lacks it)
+[52031359] GDPA returned NULL for vkCreateIndirectCommandsLayoutNV (real driver lacks it)
+[52031359] GDPA returned NULL for vkDestroyIndirectCommandsLayoutNV (real driver lacks it)
+[52031359] !!! MISSING dynamic-state vkCmdSetDepthBias2EXT -> NO-OP (state NOT applied!)
+[52031359] PROXY served via alias vkCreatePrivateDataSlotEXT -> vkCreatePrivateDataSlot
+[52031359] PROXY served via alias vkDestroyPrivateDataSlotEXT -> vkDestroyPrivateDataSlot
+[52031359] PROXY served via alias vkSetPrivateDataEXT -> vkSetPrivateData
+[52031359] PROXY served via alias vkGetPrivateDataEXT -> vkGetPrivateData
+[52031359] GDPA returned NULL for vkGetEncodedVideoSessionParametersKHR (real driver lacks it)
+[52031359] !!! vkCmdEncodeVideoKHR unresolved -> NO-OP stub (EXEC@0 guard)
+[52031359] GDPA returned NULL for vkGetQueueCheckpointData2NV (real driver lacks it)
+[52031359] GDPA returned NULL for vkGetDescriptorSetLayoutSizeEXT (real driver lacks it)
+[52031359] GDPA returned NULL for vkGetDescriptorSetLayoutBindingOffsetEXT (real driver lacks it)
+[52031359] GDPA returned NULL for vkGetDescriptorEXT (real driver lacks it)
+[52031359] !!! vkCmdBindDescriptorBuffersEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031359] !!! MISSING dynamic-state vkCmdSetDescriptorBufferOffsetsEXT -> NO-OP (state NOT applied!)
+[52031359] !!! vkCmdBindDescriptorBufferEmbeddedSamplersEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031359] GDPA returned NULL for vkGetBufferOpaqueCaptureDescriptorDataEXT (real driver lacks it)
+[52031359] GDPA returned NULL for vkGetImageOpaqueCaptureDescriptorDataEXT (real driver lacks it)
+[52031359] GDPA returned NULL for vkGetImageViewOpaqueCaptureDescriptorDataEXT (real driver lacks it)
+[52031359] GDPA returned NULL for vkGetSamplerOpaqueCaptureDescriptorDataEXT (real driver lacks it)
+[52031359] GDPA returned NULL for vkGetAccelerationStructureOpaqueCaptureDescriptorDataEXT (real driver lacks it)
+[52031359] !!! MISSING dynamic-state vkCmdSetFragmentShadingRateEnumNV -> NO-OP (state NOT applied!)
+[52031359] !!! vkCmdDrawMeshTasksEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031359] !!! vkCmdDrawMeshTasksIndirectEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031359] !!! vkCmdDrawMeshTasksIndirectCountEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031359] GDPA returned NULL for vkGetDeviceFaultInfoEXT (real driver lacks it)
+[52031359] !!! MISSING dynamic-state vkCmdSetVertexInputEXT -> NO-OP (state NOT applied!)
+[52031359] GDPA returned NULL for vkGetDeviceSubpassShadingMaxWorkgroupSizeHUAWEI (real driver lacks it)
+[52031359] GDPA returned NULL for vkCmdSubpassShadingHUAWEI (real driver lacks it)
+[52031359] GDPA returned NULL for vkCmdBindInvocationMaskHUAWEI (real driver lacks it)
+[52031359] GDPA returned NULL for vkGetMemoryRemoteAddressNV (real driver lacks it)
+[52031359] GDPA returned NULL for vkGetPipelinePropertiesEXT (real driver lacks it)
+[52031359] !!! MISSING dynamic-state vkCmdSetPatchControlPointsEXT -> NO-OP (state NOT applied!)
+[52031359] !!! dynamic-state vkCmdSetRasterizerDiscardEnableEXT unavailable on the real driver -> NO-OP (pipeline static state is used)
+[52031359] !!! dynamic-state vkCmdSetDepthBiasEnableEXT unavailable on the real driver -> NO-OP (pipeline static state is used)
+[52031359] !!! MISSING dynamic-state vkCmdSetLogicOpEXT -> NO-OP (state NOT applied!)
+[52031359] !!! dynamic-state vkCmdSetPrimitiveRestartEnableEXT unavailable on the real driver -> NO-OP (pipeline static state is used)
+[52031359] !!! MISSING dynamic-state vkCmdSetColorWriteEnableEXT -> NO-OP (state NOT applied!)
+[52031359] !!! vkCmdDrawMultiEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031359] !!! vkCmdDrawMultiIndexedEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031359] GDPA returned NULL for vkCreateMicromapEXT (real driver lacks it)
+[52031359] GDPA returned NULL for vkDestroyMicromapEXT (real driver lacks it)
+[52031359] !!! vkCmdBuildMicromapsEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031359] GDPA returned NULL for vkBuildMicromapsEXT (real driver lacks it)
+[52031359] GDPA returned NULL for vkCopyMicromapEXT (real driver lacks it)
+[52031359] GDPA returned NULL for vkCopyMicromapToMemoryEXT (real driver lacks it)
+[52031359] GDPA returned NULL for vkCopyMemoryToMicromapEXT (real driver lacks it)
+[52031359] GDPA returned NULL for vkWriteMicromapsPropertiesEXT (real driver lacks it)
+[52031359] !!! vkCmdCopyMicromapEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031359] !!! vkCmdCopyMicromapToMemoryEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031359] !!! vkCmdCopyMemoryToMicromapEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031359] !!! vkCmdWriteMicromapsPropertiesEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031359] GDPA returned NULL for vkGetDeviceMicromapCompatibilityEXT (real driver lacks it)
+[52031359] GDPA returned NULL for vkGetMicromapBuildSizesEXT (real driver lacks it)
+[52031359] GDPA returned NULL for vkCmdDrawClusterHUAWEI (real driver lacks it)
+[52031359] GDPA returned NULL for vkCmdDrawClusterIndirectHUAWEI (real driver lacks it)
+[52031359] GDPA returned NULL for vkSetDeviceMemoryPriorityEXT (real driver lacks it)
+[52031359] PROXY served via alias vkGetDeviceBufferMemoryRequirementsKHR -> vkGetDeviceBufferMemoryRequirements
+[52031359] PROXY served via alias vkGetDeviceImageMemoryRequirementsKHR -> vkGetDeviceImageMemoryRequirements
+[52031359] PROXY served via alias vkGetDeviceImageSparseMemoryRequirementsKHR -> vkGetDeviceImageSparseMemoryRequirements
+[52031359] GDPA returned NULL for vkGetDescriptorSetLayoutHostMappingInfoVALVE (real driver lacks it)
+[52031359] GDPA returned NULL for vkGetDescriptorSetHostMappingVALVE (real driver lacks it)
+[52031359] GDPA returned NULL for vkCmdCopyMemoryIndirectNV (real driver lacks it)
+[52031359] GDPA returned NULL for vkCmdCopyMemoryToImageIndirectNV (real driver lacks it)
+[52031359] GDPA returned NULL for vkCmdDecompressMemoryNV (real driver lacks it)
+[52031359] GDPA returned NULL for vkCmdDecompressMemoryIndirectCountNV (real driver lacks it)
+[52031359] GDPA returned NULL for vkGetPipelineIndirectMemoryRequirementsNV (real driver lacks it)
+[52031359] GDPA returned NULL for vkCmdUpdatePipelineIndirectBufferNV (real driver lacks it)
+[52031359] GDPA returned NULL for vkGetPipelineIndirectDeviceAddressNV (real driver lacks it)
+[52031359] !!! MISSING dynamic-state vkCmdSetTessellationDomainOriginEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetDepthClampEnableEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetPolygonModeEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetRasterizationSamplesEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetSampleMaskEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetAlphaToCoverageEnableEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetAlphaToOneEnableEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetLogicOpEnableEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetColorBlendEnableEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetColorBlendEquationEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetColorWriteMaskEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetRasterizationStreamEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetConservativeRasterizationModeEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetExtraPrimitiveOverestimationSizeEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetDepthClipEnableEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetSampleLocationsEnableEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetColorBlendAdvancedEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetProvokingVertexModeEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetLineRasterizationModeEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetLineStippleEnableEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetDepthClipNegativeOneToOneEXT -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetViewportWScalingEnableNV -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetViewportSwizzleNV -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetCoverageToColorEnableNV -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetCoverageToColorLocationNV -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetCoverageModulationModeNV -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetCoverageModulationTableEnableNV -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetCoverageModulationTableNV -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetShadingRateImageEnableNV -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetRepresentativeFragmentTestEnableNV -> NO-OP (state NOT applied!)
+[52031359] !!! MISSING dynamic-state vkCmdSetCoverageReductionModeNV -> NO-OP (state NOT applied!)
+[52031359] GDPA returned NULL for vkGetShaderModuleIdentifierEXT (real driver lacks it)
+[52031359] GDPA returned NULL for vkGetShaderModuleCreateInfoIdentifierEXT (real driver lacks it)
+[52031359] GDPA returned NULL for vkCreateOpticalFlowSessionNV (real driver lacks it)
+[52031359] GDPA returned NULL for vkDestroyOpticalFlowSessionNV (real driver lacks it)
+[52031375] GDPA returned NULL for vkBindOpticalFlowSessionImageNV (real driver lacks it)
+[52031375] GDPA returned NULL for vkCmdOpticalFlowExecuteNV (real driver lacks it)
+[52031375] GDPA returned NULL for vkGetRenderingAreaGranularityKHR (real driver lacks it)
+[52031375] GDPA returned NULL for vkGetDeviceImageSubresourceLayoutKHR (real driver lacks it)
+[52031375] GDPA returned NULL for vkGetImageSubresourceLayout2KHR (real driver lacks it)
+[52031375] GDPA returned NULL for vkCreateShadersEXT (real driver lacks it)
+[52031375] GDPA returned NULL for vkDestroyShaderEXT (real driver lacks it)
+[52031375] GDPA returned NULL for vkGetShaderBinaryDataEXT (real driver lacks it)
+[52031375] !!! vkCmdBindShadersEXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031375] GDPA returned NULL for vkGetFramebufferTilePropertiesQCOM (real driver lacks it)
+[52031375] GDPA returned NULL for vkGetDynamicRenderingTilePropertiesQCOM (real driver lacks it)
+[52031375] GDPA returned NULL for vkSetLatencySleepModeNV (real driver lacks it)
+[52031375] GDPA returned NULL for vkLatencySleepNV (real driver lacks it)
+[52031375] GDPA returned NULL for vkSetLatencyMarkerNV (real driver lacks it)
+[52031375] GDPA returned NULL for vkGetLatencyTimingsNV (real driver lacks it)
+[52031375] GDPA returned NULL for vkQueueNotifyOutOfBandNV (real driver lacks it)
+[52031375] !!! MISSING dynamic-state vkCmdSetAttachmentFeedbackLoopEnableEXT -> NO-OP (state NOT applied!)
+[52031375] GDPA returned NULL for vkGetCalibratedTimestampsKHR (real driver lacks it)
+[52031375] PROXY served via alias vkCmdBindDescriptorSets2KHR -> vkCmdBindDescriptorSets
+[52031375] PROXY served via alias vkCmdPushConstants2KHR -> vkCmdPushConstants
+[52031375] PROXY served via alias vkCmdPushDescriptorSet2KHR -> vkCmdPushDescriptorSet
+[52031375] PROXY served via alias vkCmdPushDescriptorSetWithTemplate2KHR -> vkCmdPushDescriptorSet
+[52031375] !!! MISSING dynamic-state vkCmdSetDescriptorBufferOffsets2EXT -> NO-OP (state NOT applied!)
+[52031375] !!! vkCmdBindDescriptorBufferEmbeddedSamplers2EXT unresolved -> NO-OP stub (EXEC@0 guard)
+[52031375] GDPA returned NULL for vkCmdPushXeSSDescriptorsINTEL (real driver lacks it)
+[52031390] SOFTRT: CONFIG softRT=1 buildBVH=1 trace=1 fallback=1 log=1
+[52031390] SPIRV config (F:\DOOM.The.Dark.Ages.Premium.Edition-InsaneRamZes\VulkanProxy.ini): DenyFloat16=0 DenyInt16=0 DenyDotProduct=1 DenyRayTracing=1 DenyMesh=1 PatchVersion=1 LogAll=0 Serialize=-1 Catch=1 DenyComputeAll=11 caps Brightness=1.25
+[52031390] Driver compile gate: up to 2 concurrent driver calls; compile timeout=45 s watchdog=1 maxAbandoned=4 heavyWords=0
+[52031406] vkAllocateCommandBuffers: count=1
+[52031406] vkAllocateCommandBuffers: count=1
+[52031406] vkAllocateCommandBuffers: count=1
+[52031406] vkAllocateCommandBuffers: count=1
+[52031406] vkAllocateCommandBuffers: count=1
+[52031437] Properties2 requests sType=1000071004 
+[52034171] RTFILL: init Fill=1 mode=2 ambient=0.0455 everyFrame=1 log=1
+[52036390] WATCHDOG heartbeat: in-flight=0 gate=0/2 abandoned-running=0 timed-out-total=0 recovered-crashes=0
+[52036390] FRAMES: presents=0 (+0 in last minute) submits=1 (+1) lastPresentResult=0 lastSubmitResult=0 secondsSinceLastPresent=0
+[52051593] !!! EXCEPTION 0xC0000005 at amdvlk64.dll+0x41CAAE (thread 6848)
+[52051593] !!! this thread's current job: vkQueueSubmit
+[52051593] !!! access violation: READ address 0x8
+[52051593] !!! RAX=0000000000000001 RBX=0000000000000000 RCX=00000238EDDD9DE8 RDX=00007FFAEBA436D0
+[52051593] !!! RSI=0000000000000001 RDI=00000239E2D50008 R8 =00000238ED9E4508 R9 =0000000000002000
+[52051593] !!! R14=0000000000010000 R15=00000238EDDFFC60 RSP=000000B00D3C4350 RIP=00007FFAEBBACAAE
+[52051593] !!!   frame 0: vulkan-1.dll+0x96957  <vkCreateEvent+0x8B75E>
+[52051593] !!!   frame 1: vulkan-1.dll+0x82D71  <vkCreateEvent+0x77B78>
+[52051593] !!!   frame 2: ntdll.dll+0x1ED36
+[52051593] !!!   frame 3: ntdll.dll+0x1F13E
+[52051593] !!!   frame 4: ntdll.dll+0x1636DE
+[52051593] !!!   frame 5: amdvlk64.dll+0x41CAAE
+[52051593] !!!   frame 6: amdvlk64.dll+0x42A542
+[52051593] !!!   frame 7: amdvlk64.dll+0x4C679
+[52051593] !!!   frame 8: vulkan-1.dll+0x6519D
+[52051593] !!!   frame 9: DOOMTheDarkAges.exe+0xC91FA3
+[52051593] !!!   frame 10: DOOMTheDarkAges.exe+0xC90888
+[52051593] !!!   frame 11: DOOMTheDarkAges.exe+0xC8D7A6
+[52051593] !!!   frame 12: DOOMTheDarkAges.exe+0xC8E65C
+[52051593] !!!   frame 13: DOOMTheDarkAges.exe+0xB70513
+[52051593] !!!   frame 14: DOOMTheDarkAges.exe+0xB67567
+[52051593] !!!   frame 15: DOOMTheDarkAges.exe+0xB6818B
+[52051593] !!!   frame 16: DOOMTheDarkAges.exe+0xCE1F8E
+[52051593] !!!   frame 17: DOOMTheDarkAges.exe+0xCDF347
+[52051593] !!!   frame 18: DOOMTheDarkAges.exe+0xCDFF95
+[52051593] !!!   frame 19: DOOMTheDarkAges.exe+0x15B6F3C
+[52051593] !!!   frame 20: DOOMTheDarkAges.exe+0x15B5EC6
+[52051593] !!!   frame 21: DOOMTheDarkAges.exe+0x7DA123
+[52051593] !!!   frame 22: DOOMTheDarkAges.exe+0x7DBA1D
+[52051593] !!!   frame 23: DOOMTheDarkAges.exe+0x45CEE8
+[52051593] !!!   frame 24: DOOMTheDarkAges.exe+0x45D26A
+[52051593] !!!   frame 25: DOOMTheDarkAges.exe+0x319336E
+[52051593] !!!   frame 26: KERNEL32.DLL+0x2DBE7
+[52051593] !!!   frame 27: ntdll.dll+0xDFBEC
+[52051593] !!! last API breadcrumbs (oldest first):
