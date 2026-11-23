@@ -8513,7 +8513,7 @@ namespace rtfill {
         bic.imageSubresource.layerCount = vi.range.layerCount;
         bic.imageOffset.x = 0; bic.imageOffset.y = 0; bic.imageOffset.z = 0;
         bic.imageExtent.width = width; bic.imageExtent.height = height; bic.imageExtent.depth = 1;
-        copyBufToImg(cb, staging, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, vi.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bic);
+        copyBufToImg(cb, staging, vi.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bic);
 
         b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
