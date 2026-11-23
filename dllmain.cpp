@@ -1211,17 +1211,20 @@ vkQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo* pSubmits,
                 }
             }
             if (cbs.empty() && ws.empty() && ss.empty()) continue;
-            VkSubmitInfo entry = pSubmits[i];
-            entry.commandBufferCount = (uint32_t)cbs.size();
-            entry.pCommandBuffers = cbs.empty() ? nullptr : cbs.data();
-            entry.waitSemaphoreCount = (uint32_t)ws.size();
-            entry.pWaitSemaphores = ws.empty() ? nullptr : ws.data();
-            entry.signalSemaphoreCount = (uint32_t)ss.size();
-            entry.pSignalSemaphores = ss.empty() ? nullptr : ss.data();
-            safe.push_back(entry);
+            // Move vectors into persistent containers FIRST, then set pointers
+            // to their .data() - otherwise the pointers dangle after the move.
             safeCBs.push_back(std::move(cbs));
             safeWaitSem.push_back(std::move(ws));
             safeSigSem.push_back(std::move(ss));
+            size_t idx = safe.size();
+            VkSubmitInfo entry = pSubmits[i];
+            entry.commandBufferCount = (uint32_t)safeCBs[idx].size();
+            entry.pCommandBuffers = safeCBs[idx].empty() ? nullptr : safeCBs[idx].data();
+            entry.waitSemaphoreCount = (uint32_t)safeWaitSem[idx].size();
+            entry.pWaitSemaphores = safeWaitSem[idx].empty() ? nullptr : safeWaitSem[idx].data();
+            entry.signalSemaphoreCount = (uint32_t)safeSigSem[idx].size();
+            entry.pSignalSemaphores = safeSigSem[idx].empty() ? nullptr : safeSigSem[idx].data();
+            safe.push_back(entry);
         }
         if (safe.empty()) return VK_SUCCESS;
         if (totalFiltered > 0) {
