@@ -73,6 +73,9 @@ namespace rtfill {
     void TrackBind(VkCommandBuffer cb, uint32_t firstSet, uint32_t count, const VkDescriptorSet* sets);
     void TrackBarriers(uint32_t count, const VkImageMemoryBarrier* barriers);
     void OnTraceRays(VkCommandBuffer cb, uint32_t width, uint32_t height);
+    void TrackColorAttachment(VkCommandBuffer cb, VkImage image, VkFormat format, VkImageSubresourceRange range);
+    void FillColorAttachment(VkCommandBuffer cb);
+    void ClearColorAttachment(VkCommandBuffer cb);
     bool GetTraceViews(VkCommandBuffer cb, std::vector<uint64_t>& out);
     bool FillViewFromRadiance(uint64_t viewKey, VkCommandBuffer cb, VkBuffer staging,
         uint32_t width, uint32_t height, const std::vector<float>& radiance);
@@ -6861,6 +6864,7 @@ vkCmdDraw(VkCommandBuffer cb, uint32_t vertexCount, uint32_t instanceCount, uint
         LONG n = InterlockedIncrement(&skipped);
         if (n <= 5 || n % 500 == 0)
             LogLine("SKIP draw on FAKE pipeline (total skipped draws~%ld)", (long)n);
+        rtfill::FillColorAttachment(cb);
         return;
     }
     auto real = RealExport<PFN_vkCmdDraw>("vkCmdDraw");
@@ -6958,6 +6962,7 @@ if (IsBoundPipelineFake(cb)) {
     LONG k = InterlockedIncrement(&skippedIdx);
     if (k <= 5 || k % 2000 == 0)
         LogLine("SKIP indexed draw on FAKE pipeline (total=%ld)", (long)k);
+    rtfill::FillColorAttachment(cb);
     return;
 }
     auto real = RealExport<PFN_vkCmdDrawIndexed>("vkCmdDrawIndexed");
@@ -6973,7 +6978,7 @@ vkCmdDispatch(VkCommandBuffer cb, uint32_t groupCountX, uint32_t groupCountY, ui
 
 extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdDrawIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance) {
-    if (IsBoundPipelineFake(cb)) return;
+    if (IsBoundPipelineFake(cb)) { rtfill::FillColorAttachment(cb); return; }
     if (!buffer || IsFake(buffer)) return; // [CRASHFIX]
     auto realRaw = RealProc("vkCmdDrawIndirect");
     auto real = reinterpret_cast<void(__cdecl*)(VkCommandBuffer, VkBuffer, VkDeviceSize, uint32_t, uint32_t, uint32_t, uint32_t)>(realRaw);
@@ -6982,7 +6987,7 @@ vkCmdDrawIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint
 
 extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdDrawIndexedIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t instanceCount, uint32_t firstIndex, int32_t vertexOffset, uint32_t firstInstance) {
-    if (IsBoundPipelineFake(cb)) return;
+    if (IsBoundPipelineFake(cb)) { rtfill::FillColorAttachment(cb); return; }
     if (!buffer || IsFake(buffer)) return; // [CRASHFIX]
     auto realRaw = RealProc("vkCmdDrawIndexedIndirect");
     auto real = reinterpret_cast<void(__cdecl*)(VkCommandBuffer, VkBuffer, VkDeviceSize, uint32_t, uint32_t, uint32_t, int32_t, uint32_t)>(realRaw);
@@ -7213,6 +7218,18 @@ vkCmdBeginRendering(VkCommandBuffer cb, const VkRenderingInfo* pInfo) {
         if (dA) clears[ci2].depthStencil.depth = dA->clearValue.depthStencil.depth;
         if (sA) clears[ci2].depthStencil.stencil = sA->clearValue.depthStencil.stencil;
     }
+    // [MENU-FIX] Track the first color attachment so rtfill can fill it with
+    // ambient color when a draw on a FAKE (heavy) pipeline is skipped.
+    for (uint32_t i = 0; i < pInfo->colorAttachmentCount; ++i) {
+        const VkRenderingAttachmentInfo& ca = pInfo->pColorAttachments[i];
+        if (!ca.imageView) continue;
+        dynrend::ImageViewInfo vi{};
+        if (dynrend::LookupImageView(ca.imageView, &vi) && vi.image) {
+            rtfill::TrackColorAttachment(cb, vi.image, vi.format,
+                vi.range.aspectMask ? vi.range : VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
+        }
+        break;
+    }
     VkRenderPassBeginInfo rpbi{};
     rpbi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rpbi.renderPass = rp; rpbi.framebuffer = fb; rpbi.renderArea = pInfo->renderArea;
@@ -7239,6 +7256,7 @@ vkCmdEndRendering(VkCommandBuffer cb) {
     }
     ReleaseSRWLockExclusive(&dynrend::g_lock);
 
+    rtfill::ClearColorAttachment(cb);
     if (!have) {
         static volatile LONG n = 0;
         if (InterlockedIncrement(&n) <= 8)
@@ -8941,5 +8959,111 @@ namespace rtfill {
                 LogLine("RTFILL: TraceRays %ux%u -> cleared %u RT output(s) (ambient=%.4f), total=%ld",
                     width, height, done, s_clear[0], (long)k);
         }
+    }
+
+    // [MENU-FIX] Track the current color attachment so we can fill it with ambient
+    // color when a draw on a FAKE (heavy) pipeline is skipped. Without this the
+    // color attachment stays black -> black screen in menu.
+    static std::unordered_map<uint64_t, VkImage>* s_colorAttach = nullptr;
+    static std::unordered_map<uint64_t, VkFormat>* s_colorFormat = nullptr;
+    static std::unordered_map<uint64_t, VkImageSubresourceRange>* s_colorRange = nullptr;
+    static std::unordered_map<uint64_t, bool>* s_filledThisPass = nullptr;
+
+    void TrackColorAttachment(VkCommandBuffer cb, VkImage image, VkFormat format, VkImageSubresourceRange range) {
+        InitOnce();
+        if (!s_enabled || !cb || !image || IsFake(image)) return;
+        AcquireSRWLockExclusive(&s_lock);
+        if (s_filledThisPass) s_filledThisPass->erase(K(cb));
+        ReleaseSRWLockExclusive(&s_lock);
+        AcquireSRWLockExclusive(&s_lock);
+        EnsureMaps();
+        if (!s_colorAttach) s_colorAttach = new (std::nothrow) std::unordered_map<uint64_t, VkImage>();
+        if (!s_colorFormat) s_colorFormat = new (std::nothrow) std::unordered_map<uint64_t, VkFormat>();
+        if (!s_colorRange) s_colorRange = new (std::nothrow) std::unordered_map<uint64_t, VkImageSubresourceRange>();
+        if (!s_filledThisPass) s_filledThisPass = new (std::nothrow) std::unordered_map<uint64_t, bool>();
+        (*s_colorAttach)[K(cb)] = image;
+        (*s_colorFormat)[K(cb)] = format;
+        (*s_colorRange)[K(cb)] = range;
+        ReleaseSRWLockExclusive(&s_lock);
+    }
+
+    void FillColorAttachment(VkCommandBuffer cb) {
+        InitOnce();
+        if (!s_enabled || !cb) return;
+        VkImage image = VK_NULL_HANDLE;
+        VkFormat format = VK_FORMAT_UNDEFINED;
+        VkImageSubresourceRange range{};
+        {
+            AcquireSRWLockShared(&s_lock);
+            if (s_colorAttach) {
+                auto it = s_colorAttach->find(K(cb));
+                if (it != s_colorAttach->end()) {
+                    image = it->second;
+                    if (s_colorFormat) format = (*s_colorFormat)[K(cb)];
+                    if (s_colorRange) range = (*s_colorRange)[K(cb)];
+                }
+            }
+            ReleaseSRWLockShared(&s_lock);
+        }
+        if (!image || IsFake(image)) return;
+        if (!IsClearColorFormat(format)) return;
+        AcquireSRWLockExclusive(&s_lock);
+        if (s_filledThisPass && (*s_filledThisPass)[K(cb)]) { ReleaseSRWLockExclusive(&s_lock); return; }
+        if (s_filledThisPass) (*s_filledThisPass)[K(cb)] = true;
+        ReleaseSRWLockExclusive(&s_lock);
+        if (range.aspectMask == 0) range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+
+        auto clear = RealExport<PFN_vkCmdClearColorImage>("vkCmdClearColorImage");
+        auto barrier = RealExport<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
+        if (!clear || !barrier) return;
+
+        VkClearColorValue col{};
+        col.float32[0] = s_clear[0]; col.float32[1] = s_clear[1];
+        col.float32[2] = s_clear[2]; col.float32[3] = s_clear[3];
+
+        VkImageLayout cur = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        AcquireSRWLockShared(&s_lock);
+        if (s_layouts) { auto l = s_layouts->find(K(image)); if (l != s_layouts->end()) cur = l->second; }
+        ReleaseSRWLockShared(&s_lock);
+
+        if (FirstTime("rtfill:fillcolor"))
+            LogLine("RTFILL: FillColorAttachment cb=%p image=%p fmt=%d (ambient=%.4f/%.4f/%.4f)",
+                (void*)cb, (void*)image, (int)format, s_clear[0], s_clear[1], s_clear[2]);
+
+        VkImageMemoryBarrier b{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+        b.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b.oldLayout = cur;
+        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = image;
+        b.subresourceRange = range;
+        barrier(cb, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+
+        clear(cb, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &col, 1, &range);
+
+        b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+
+        AcquireSRWLockExclusive(&s_lock);
+        if (s_layouts) (*s_layouts)[K(image)] = b.newLayout;
+        ReleaseSRWLockExclusive(&s_lock);
+    }
+
+    void ClearColorAttachment(VkCommandBuffer cb) {
+        InitOnce();
+        if (!s_enabled || !cb) return;
+        AcquireSRWLockExclusive(&s_lock);
+        if (s_colorAttach) s_colorAttach->erase(K(cb));
+        if (s_colorFormat) s_colorFormat->erase(K(cb));
+        if (s_colorRange) s_colorRange->erase(K(cb));
+        if (s_filledThisPass) s_filledThisPass->erase(K(cb));
+        ReleaseSRWLockExclusive(&s_lock);
     }
 } // namespace rtfill
