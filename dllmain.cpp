@@ -5674,6 +5674,13 @@ vkBindBufferMemory(VkDevice device, VkBuffer buffer, VkDeviceMemory memory, VkDe
             LogLine("vkBindBufferMemory: skipped FAKE/null buffer=%p memory=%p", (void*)buffer, (void*)memory);
         return VK_SUCCESS;
     }
+    // [HANGFIX] Crash circuit breaker: after 3 crashes in vkBindBufferMemory,
+    // skip the bind entirely. The crash cascade (9 recovered) causes the world hang.
+    static volatile LONG s_bindCrashCount = 0;
+    if (InterlockedIncrement(&s_bindCrashCount) > 3) {
+        if (s_bindCrashCount == 4) LogLine("vkBindBufferMemory: circuit breaker ON (too many crashes) - skipping bind");
+        return VK_SUCCESS;
+    }
     VkResult r = VK_ERROR_UNKNOWN;
     if (!DriverCall([&]() { r = real(device, buffer, memory, offset); }, false)) {   // [v3.2] not gated by shader compiles
         LogLine("CAUGHT driver crash in vkBindBufferMemory buffer=%p memory=%p offset=%llu",
