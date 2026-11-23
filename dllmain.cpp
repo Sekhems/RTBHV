@@ -214,6 +214,16 @@ namespace {
     // 1 = VK_EXT_extended_dynamic_state was enabled on the real device (core 1.3 vkCmdSet* are routed to it).
     volatile LONG g_edsEnabled = 0;
 
+    // Ring buffer of the most recent NULL results from the GetProcAddr entry points.
+    // When the game later calls a stored nullptr we get EXEC@0; dumping this buffer
+    // at that moment tells us exactly which function name the game could not resolve.
+    struct NullCallRing {
+        char names[24][128];
+        volatile LONG idx = 0;
+        volatile LONG count = 0;
+    };
+    NullCallRing g_nullCallRing;
+
 // [v3.2] frame / submit counters for the watchdog heartbeat and the stall detector.
 volatile LONG g_presentCount = 0;
 volatile LONG g_submitCount = 0;
@@ -4593,6 +4603,17 @@ if (si.rewritten) return std::string();
                 if (ret > 0x10000ull) {
                     char caller[300]; ModuleOffset((void*)ret, caller, sizeof(caller));
                 LogLine("!!! EXEC@0 skipped null call, caller=%s", caller);
+                    // Diagnostic: dump the most recent GetProcAddr NULL answers so the
+                    // null function name that the game stored can be identified.
+                    {
+                        const LONG total = g_nullCallRing.count;
+                        const LONG pos = g_nullCallRing.idx;
+                        LogLine("!!! EXEC@0 last NULL GetProcAddr answers (most recent first):");
+                        for (int k = 0; k < 8 && k < total; ++k) {
+                            const LONG idx = (pos - 1 - k + 24 * 4) % 24;
+                            LogLine("!!!   %s", g_nullCallRing.names[idx]);
+                        }
+                    }
                     ep->ContextRecord->Rip = ret;
                     ep->ContextRecord->Rsp += 8;  // pop return address
                     ep->ContextRecord->Rax = 0;   // return VK_SUCCESS / nullptr
@@ -7730,6 +7751,23 @@ vkGetDeviceProcAddr(VkDevice device, const char* pName) {
             { "vkDestroyPrivateDataSlotEXT", "vkDestroyPrivateDataSlot" },
             { "vkSetPrivateDataEXT", "vkSetPrivateData" },
             { "vkGetPrivateDataEXT", "vkGetPrivateData" },
+            // [FIX EXEC@0 +0xC84B65] Doom TDA (Vulkan 1.3 game) fetches the 1.3 core
+            // command names through GDPA. The real driver is Vulkan 1.2: the KHR/EXT
+            // aliases below resolve to *core 1.3* names which the driver does not export
+            // (g_realGdpa/GetProcAddress all fail) -> NULL -> the game called the stored
+            // nullptr right after vkCreateComputePipelines -> "EXEC@0 skipped null call"
+            // -> descriptor binding never happened for the compute dispatch. Map these
+            // to the Vulkan 1.1 core equivalents the driver actually exports.
+            { "vkCmdBindDescriptorSets2KHR", "vkCmdBindDescriptorSets" },
+            { "vkCmdBindDescriptorSets2EXT", "vkCmdBindDescriptorSets" },
+            { "vkCmdPushDescriptorSetKHR", "vkCmdPushDescriptorSet" },
+            { "vkCmdPushDescriptorSet2KHR", "vkCmdPushDescriptorSet" },
+            { "vkCmdPushDescriptorSet2EXT", "vkCmdPushDescriptorSet" },
+            { "vkCmdPushDescriptorSetWithTemplateKHR", "vkCmdPushDescriptorSet" },
+            { "vkCmdPushDescriptorSetWithTemplate2KHR", "vkCmdPushDescriptorSet" },
+            { "vkCmdPushConstants2KHR", "vkCmdPushConstants" },
+            { "vkCmdBindVertexBuffers2KHR", "vkCmdBindVertexBuffers" },
+            { "vkCmdBindIndexBuffer2KHR", "vkCmdBindIndexBuffer" },
             { nullptr, nullptr }
         };
         for (int i = 0; aliases[i][0]; ++i) {
@@ -7760,12 +7798,33 @@ vkGetDeviceProcAddr(VkDevice device, const char* pName) {
         return reinterpret_cast<PFN_vkVoidFunction>(&Stub_NoopCmd);
     }
     if (!result && !strncmp(pName, "vkCmdSet", 8)) {
-    if (FirstTime(std::string("noop-set:") + pName))
-        LogLine("!!! MISSING dynamic-state %s -> NO-OP (state NOT applied!)", pName);
-    return reinterpret_cast<PFN_vkVoidFunction>(&Stub_NoopCmd);
-}
-if (!result && FirstTime(std::string("gdpa-null:") + pName))
-        LogLine("GDPA returned NULL for %s (real driver lacks it)", pName);
+        if (FirstTime(std::string("noop-set:") + pName))
+            LogLine("!!! MISSING dynamic-state %s -> NO-OP (state NOT applied!)", pName);
+        return reinterpret_cast<PFN_vkVoidFunction>(&Stub_NoopCmd);
+    }
+    // [FIX EXEC@0] Last-resort guard: a null FP stored by the game and later called
+    // crashes with EXEC@0 (seen at DOOMTheDarkAges.exe+0xC84B65). Any vkCmd* function
+    // with a vendor suffix that we still failed to resolve is served as a harmless
+    // no-op command stub — a missing command is bad, a NULL call is worse.
+    if (!result && pName && !strncmp(pName, "vkCmd", 4)) {
+        const size_t len = strlen(pName);
+        const bool suffixed = len > 3 && (strcmp(pName + len - 3, "KHR") == 0 ||
+                                          strcmp(pName + len - 3, "EXT") == 0);
+        if (suffixed) {
+            if (FirstTime(std::string("cmd-noop-guard:") + pName))
+                LogLine("!!! %s unresolved -> NO-OP stub (EXEC@0 guard)", pName);
+            return reinterpret_cast<PFN_vkVoidFunction>(&Stub_NoopCmd);
+        }
+    }
+if (!result) {
+        if (FirstTime(std::string("gdpa-null:") + pName))
+            LogLine("GDPA returned NULL for %s (real driver lacks it)", pName);
+        const LONG pos = g_nullCallRing.idx;
+        strncpy_s(g_nullCallRing.names[pos], sizeof(g_nullCallRing.names[pos]),
+                  pName, _TRUNCATE);
+        g_nullCallRing.idx = (pos + 1) % 24;
+        InterlockedIncrement(&g_nullCallRing.count);
+    }
     return result;
 }
 
