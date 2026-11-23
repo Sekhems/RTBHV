@@ -1155,14 +1155,6 @@ vkQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo* pSubmits,
 }
 
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
-vkQueueSubmitBatch(VkQueue queue, uint32_t submitCount, const VkSubmitInfo2* pSubmits, VkFence fence) {
-    auto real = RealExport<PFN_vkQueueSubmitBatch>("vkQueueSubmitBatch");
-    if (!real) return VK_ERROR_INITIALIZATION_FAILED;
-    if (submitCount == 0 || !pSubmits) return real(queue, 0, nullptr, fence);
-    return SubmitTimed([&]() { return real(queue, submitCount, pSubmits, fence); }, "vkQueueSubmitBatch");
-}
-
-extern "C" VKAPI_ATTR VkResult VKAPI_CALL
 vkQueueWaitIdle(VkQueue queue) {
     auto real = RealExport<PFN_vkQueueWaitIdle>("vkQueueWaitIdle");
     if (!real) return VK_ERROR_INITIALIZATION_FAILED;
@@ -6008,7 +6000,6 @@ vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo* pInfo,
             VKSTUB("vkQueueSubmit2KHR",        vkQueueSubmit2KHR),
             // [v4-HANG] plain queue/fence watchdog hooks (the real hang path)
             VKSTUB("vkQueueSubmit",           vkQueueSubmit),
-            VKSTUB("vkQueueSubmitBatch",      vkQueueSubmitBatch),
             VKSTUB("vkQueueWaitIdle",         vkQueueWaitIdle),
             VKSTUB("vkWaitForFences",         vkWaitForFences),
             VKSTUB("vkCmdPipelineBarrier2",    vkCmdPipelineBarrier2),
@@ -7836,23 +7827,25 @@ namespace swrtx {
 
     static inline uint64_t K(const void* h) { return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(h)); }
 
-    static void IniPath(wchar_t* out, size_t cap) {
-        out[0] = 0;
-        HMODULE self = nullptr;
-        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            reinterpret_cast<LPCWSTR>(&IniPath), &self);
-        wchar_t path[2048]{};
-        const DWORD n = self ? GetModuleFileNameW(self, path, 2048) : 0;
-        if (n == 0 || n >= 2048) { wcscpy_s(out, cap, L"VulkanProxy.ini"); return; }
-        wchar_t* slash = wcsrchr(path, L'\\');
-        if (slash) *(slash + 1) = 0;
-        wcscpy_s(out, cap, path);
-        wcscat_s(out, cap, L"VulkanProxy.ini");
-    }
     static void InitOnce() {
         if (InterlockedCompareExchange(&s_init, 1, 0) != 0) return;
         wchar_t ini[2048]{};
-        InitPath(ini, 2048);
+        // Resolve the ini path next to this DLL.
+        {
+            HMODULE self = nullptr;
+            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                reinterpret_cast<LPCWSTR>(&InitOnce), &self);
+            wchar_t path[2048]{};
+            const DWORD n = self ? GetModuleFileNameW(self, path, 2048) : 0;
+            if (n != 0 && n < 2048) {
+                wchar_t* slash = wcsrchr(path, L'\\');
+                if (slash) *(slash + 1) = 0;
+                wcscpy_s(ini, 2048, path);
+                wcscat_s(ini, 2048, L"VulkanProxy.ini");
+            } else {
+                wcscpy_s(ini, 2048, L"VulkanProxy.ini");
+            }
+        }
         s_enabled = GetPrivateProfileIntW(L"spirv", L"SoftRT", 1, ini) ? 1 : 0;
         s_log = GetPrivateProfileIntW(L"spirv", L"SoftRTLog", 1, ini) ? 1 : 0;
         int amb = 35;
@@ -8515,12 +8508,12 @@ namespace rtfill {
         bic.bufferRowLength = 0;
         bic.bufferImageHeight = 0;
         bic.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        bic.imageSubresource.mipLevel = vi.range.mipLevel;
+        bic.imageSubresource.mipLevel = vi.range.baseMipLevel;
         bic.imageSubresource.baseArrayLayer = vi.range.baseArrayLayer;
         bic.imageSubresource.layerCount = vi.range.layerCount;
         bic.imageOffset.x = 0; bic.imageOffset.y = 0; bic.imageOffset.z = 0;
         bic.imageExtent.width = width; bic.imageExtent.height = height; bic.imageExtent.depth = 1;
-        copyBufToImg(cb, staging, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, vi.image, 1, &bic);
+        copyBufToImg(cb, staging, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, vi.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bic);
 
         b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
