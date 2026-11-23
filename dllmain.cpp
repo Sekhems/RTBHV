@@ -1077,7 +1077,8 @@ vkQueueSubmit2(VkQueue queue, uint32_t submitCount, const VkSubmitInfo2* pSubmit
         si[i].pSignalSemaphores = sigSem[i].empty() ? nullptr : sigSem[i].data();
     }
     if (FirstTime("sync2:queueSubmit2")) LogLine("SYNC2: vkQueueSubmit2 -> vkQueueSubmit (+timeline values)");
-    const VkResult sr = real(queue, submitCount, si.data(), fence);
+    // Route through vkQueueSubmit so NULL/FAKE command buffers are filtered before the driver call
+    const VkResult sr = vkQueueSubmit(queue, submitCount, si.data(), fence);
     // [v3.2] a lost device / failed submit used to be invisible in the log
     InterlockedIncrement(&g_submitCount);
     InterlockedExchange(&g_lastSubmitRes, static_cast<LONG>(sr));
@@ -1168,26 +1169,65 @@ vkQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo* pSubmits,
     auto real = RealExport<PFN_vkQueueSubmit>("vkQueueSubmit");
     if (!real) return VK_ERROR_INITIALIZATION_FAILED;
     if (submitCount == 0 || !pSubmits) return real(queue, 0, nullptr, fence);
-    // [CRASHFIX] Filter out submit entries with NULL/FAKE command buffers.
+    // [CRASHFIX] Remove NULL/FAKE command buffers and semaphores from every submit entry.
     // amdvlk64 derefs NULL command buffer at [obj+8] during submit -> AV at 0x8.
+    // Previous filter only dropped entries where ALL CBs were bad; a mixed entry
+    // [valid, NULL, valid] still passed the NULL CB to the driver -> same crash.
+    // Now each entry gets a new filtered CB array; NULL/FAKE CBs are removed individually.
     {
         std::vector<VkSubmitInfo> safe;
         safe.reserve(submitCount);
+        std::vector<std::vector<VkCommandBuffer>> safeCBs(submitCount);
+        std::vector<std::vector<VkSemaphore>> safeWaitSem(submitCount), safeSigSem(submitCount);
+        uint32_t totalFiltered = 0;
         for (uint32_t i = 0; i < submitCount; ++i) {
-            if (!pSubmits[i].pCommandBuffers || pSubmits[i].commandBufferCount == 0) continue;
-            bool allBad = true;
-            for (uint32_t j = 0; j < pSubmits[i].commandBufferCount; ++j) {
-                if (pSubmits[i].pCommandBuffers[j] && !IsFake(pSubmits[i].pCommandBuffers[j])) { allBad = false; break; }
+            VkSubmitInfo& s = safe.empty() ? pSubmits[i] : pSubmits[i];
+            // Filter command buffers
+            std::vector<VkCommandBuffer> cbs;
+            if (pSubmits[i].pCommandBuffers && pSubmits[i].commandBufferCount > 0) {
+                for (uint32_t j = 0; j < pSubmits[i].commandBufferCount; ++j) {
+                    VkCommandBuffer cb = pSubmits[i].pCommandBuffers[j];
+                    if (cb && !IsFake(cb)) cbs.push_back(cb);
+                    else ++totalFiltered;
+                }
             }
-            if (allBad) continue;
-            safe.push_back(pSubmits[i]);
+            // Filter wait semaphores
+            std::vector<VkSemaphore> ws;
+            if (pSubmits[i].pWaitSemaphores && pSubmits[i].waitSemaphoreCount > 0) {
+                for (uint32_t j = 0; j < pSubmits[i].waitSemaphoreCount; ++j) {
+                    VkSemaphore sm = pSubmits[i].pWaitSemaphores[j];
+                    if (sm && !IsFake(sm)) ws.push_back(sm);
+                    else ++totalFiltered;
+                }
+            }
+            // Filter signal semaphores
+            std::vector<VkSemaphore> ss;
+            if (pSubmits[i].pSignalSemaphores && pSubmits[i].signalSemaphoreCount > 0) {
+                for (uint32_t j = 0; j < pSubmits[i].signalSemaphoreCount; ++j) {
+                    VkSemaphore sm = pSubmits[i].pSignalSemaphores[j];
+                    if (sm && !IsFake(sm)) ss.push_back(sm);
+                    else ++totalFiltered;
+                }
+            }
+            if (cbs.empty() && ws.empty() && ss.empty()) continue;
+            VkSubmitInfo entry = pSubmits[i];
+            entry.commandBufferCount = (uint32_t)cbs.size();
+            entry.pCommandBuffers = cbs.empty() ? nullptr : cbs.data();
+            entry.waitSemaphoreCount = (uint32_t)ws.size();
+            entry.pWaitSemaphores = ws.empty() ? nullptr : ws.data();
+            entry.signalSemaphoreCount = (uint32_t)ss.size();
+            entry.pSignalSemaphores = ss.empty() ? nullptr : ss.data();
+            safe.push_back(entry);
+            safeCBs.push_back(std::move(cbs));
+            safeWaitSem.push_back(std::move(ws));
+            safeSigSem.push_back(std::move(ss));
         }
         if (safe.empty()) return VK_SUCCESS;
-        if (safe.size() < submitCount) {
+        if (totalFiltered > 0) {
             static volatile LONG n = 0;
             if (InterlockedIncrement(&n) <= 20)
-                LogLine("vkQueueSubmit: filtered %u/%u NULL/FAKE submit entries",
-                    (unsigned)(submitCount - safe.size()), submitCount);
+                LogLine("vkQueueSubmit: filtered %u NULL/FAKE CBs/sems from %u/%u entries",
+                    totalFiltered, (unsigned)safe.size(), submitCount);
         }
         return SubmitTimed([&]() { return real(queue, (uint32_t)safe.size(), safe.data(), fence); }, "vkQueueSubmit");
     }
