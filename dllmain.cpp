@@ -1238,11 +1238,12 @@ vkQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo* pSubmits,
         // DriverCallTimed spawns a worker thread via CreateThread; amdvlk64 requires vkQueueSubmit
         // to be called from the SAME thread that created the queue. Cross-thread submit reads
         // NULL thread-local state -> AV at [NULL+8], RBX=0. This was the real crash root cause.
+        // VEH handler (re-armed in SubmitTimed / at init) catches any driver crash.
         VkResult drvRes = VK_SUCCESS;
-        if (g_spvCfg.catchDriverCrash) {
-            if (!SehRun([&]() { drvRes = real(queue, (uint32_t)safe->infos.size(), safe->infos.data(), fence); })) drvRes = VK_TIMEOUT;
-        } else {
+        __try {
             drvRes = real(queue, (uint32_t)safe->infos.size(), safe->infos.data(), fence);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            drvRes = VK_TIMEOUT;
         }
         InterlockedIncrement(&g_submitCount);
         InterlockedExchange(&g_lastSubmitRes, static_cast<LONG>(drvRes));
@@ -1256,10 +1257,10 @@ vkQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo* pSubmits,
         return drvRes;
     }
     VkResult drvRes2 = VK_SUCCESS;
-    if (g_spvCfg.catchDriverCrash) {
-        if (!SehRun([&]() { drvRes2 = real(queue, submitCount, pSubmits, fence); })) drvRes2 = VK_TIMEOUT;
-    } else {
+    __try {
         drvRes2 = real(queue, submitCount, pSubmits, fence);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        drvRes2 = VK_TIMEOUT;
     }
     InterlockedIncrement(&g_submitCount);
     InterlockedExchange(&g_lastSubmitRes, static_cast<LONG>(drvRes2));
