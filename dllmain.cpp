@@ -6093,6 +6093,19 @@ vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo* pInfo,
             for (const Entry& e : kAlwaysTable) if (strcmp(e.name, name) == 0) return e.fn;
             if (!g_rtSpoof) return nullptr;
             for (const Entry& e : kTable) if (strcmp(e.name, name) == 0) return e.fn;
+            // [FIX] Doom TDA queries the CORE (no-suffix) names: vkCmdTraceRays,
+            // vkBuildAccelerationStructures, vkCmdBuildAccelerationStructures ... The
+            // kTable only carries the KHR-suffixed entries, so the core name returned
+            // nullptr -> the game stored NULL -> EXEC@0 skipped null call -> ray tracing
+            // (and the AS builds that feed the software BVH) never ran -> no lighting.
+            // Retry with the KHR suffix appended.
+            const size_t len = strlen(name);
+            if (len > 0 && len < 160) {
+                char ext[164];
+                memcpy(ext, name, len);
+                ext[len] = 'K'; ext[len + 1] = 'H'; ext[len + 2] = 'R'; ext[len + 3] = 0;
+                for (const Entry& e : kTable) if (strcmp(e.name, ext) == 0) return e.fn;
+            }
             return nullptr;
         }
     }
