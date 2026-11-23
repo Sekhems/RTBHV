@@ -6898,7 +6898,8 @@ extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdDrawIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance) {
     if (IsBoundPipelineFake(cb)) return;
     if (!buffer || IsFake(buffer)) return; // [CRASHFIX]
-    auto real = RealExport<PFN_vkCmdDrawIndirect>("vkCmdDrawIndirect");
+    auto realRaw = RealProc("vkCmdDrawIndirect");
+    auto real = reinterpret_cast<void(__cdecl*)(VkCommandBuffer, VkBuffer, VkDeviceSize, uint32_t, uint32_t, uint32_t, uint32_t)>(realRaw);
     if (real) real(cb, buffer, offset, drawCount, instanceCount, firstVertex, firstInstance);
 }
 
@@ -6906,7 +6907,8 @@ extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdDrawIndexedIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t instanceCount, uint32_t firstIndex, int32_t vertexOffset, uint32_t firstInstance) {
     if (IsBoundPipelineFake(cb)) return;
     if (!buffer || IsFake(buffer)) return; // [CRASHFIX]
-    auto real = RealExport<PFN_vkCmdDrawIndexedIndirect>("vkCmdDrawIndexedIndirect");
+    auto realRaw = RealProc("vkCmdDrawIndexedIndirect");
+    auto real = reinterpret_cast<void(__cdecl*)(VkCommandBuffer, VkBuffer, VkDeviceSize, uint32_t, uint32_t, uint32_t, int32_t, uint32_t)>(realRaw);
     if (real) real(cb, buffer, offset, drawCount, instanceCount, firstIndex, vertexOffset, firstInstance);
 }
 
