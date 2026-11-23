@@ -1166,6 +1166,20 @@ namespace {
     }
 }
 
+// [CRASHFIX] Helper: call vkQueueSubmit on current thread with SEH protection.
+// Cannot use __try/__except directly in vkQueueSubmit (C2712: C++ objects with destructors).
+// This helper has no C++ objects, so __try/__except is allowed.
+static VkResult SubmitOnCurrentThread(PFN_vkQueueSubmit real, VkQueue queue,
+    uint32_t count, const VkSubmitInfo* submits, VkFence fence) {
+    VkResult res = VK_SUCCESS;
+    __try {
+        res = real(queue, count, submits, fence);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        res = VK_TIMEOUT;
+    }
+    return res;
+}
+
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
 vkQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo* pSubmits, VkFence fence) {
     auto real = RealExport<PFN_vkQueueSubmit>("vkQueueSubmit");
@@ -1239,12 +1253,7 @@ vkQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo* pSubmits,
         // to be called from the SAME thread that created the queue. Cross-thread submit reads
         // NULL thread-local state -> AV at [NULL+8], RBX=0. This was the real crash root cause.
         // VEH handler (re-armed in SubmitTimed / at init) catches any driver crash.
-        VkResult drvRes = VK_SUCCESS;
-        __try {
-            drvRes = real(queue, (uint32_t)safe->infos.size(), safe->infos.data(), fence);
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            drvRes = VK_TIMEOUT;
-        }
+        VkResult drvRes = SubmitOnCurrentThread(real, queue, (uint32_t)safe->infos.size(), safe->infos.data(), fence);
         InterlockedIncrement(&g_submitCount);
         InterlockedExchange(&g_lastSubmitRes, static_cast<LONG>(drvRes));
         InterlockedExchange64(&g_lastSubmitTick, static_cast<LONG64>(GetTickCount64()));
@@ -1256,12 +1265,7 @@ vkQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo* pSubmits,
         }
         return drvRes;
     }
-    VkResult drvRes2 = VK_SUCCESS;
-    __try {
-        drvRes2 = real(queue, submitCount, pSubmits, fence);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        drvRes2 = VK_TIMEOUT;
-    }
+    VkResult drvRes2 = SubmitOnCurrentThread(real, queue, submitCount, pSubmits, fence);
     InterlockedIncrement(&g_submitCount);
     InterlockedExchange(&g_lastSubmitRes, static_cast<LONG>(drvRes2));
     InterlockedExchange64(&g_lastSubmitTick, static_cast<LONG64>(GetTickCount64()));
