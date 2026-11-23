@@ -7226,7 +7226,7 @@ vkCmdBeginRendering(VkCommandBuffer cb, const VkRenderingInfo* pInfo) {
         dynrend::ImageViewInfo vi{};
         if (dynrend::LookupImageView(ca.imageView, &vi) && vi.image) {
             rtfill::TrackColorAttachment(cb, vi.image, vi.format,
-                vi.range.aspectMask ? vi.range : VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
+                VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
         }
         break;
     }
