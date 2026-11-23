@@ -1112,6 +1112,12 @@ namespace {
     // The result and the callable are held in shared_ptr so the worker thread (which
     // may outlive this frame after a timeout) never touches dangling stack references.
     template<class F> VkResult SubmitTimed(F&& f, const char* job) {
+        // [CRASHFIX] Re-install VEH handler before every driver call. The game
+        // installs its own VEH that kills the process; since VEH handlers with
+        // CallFirst=1 run in reverse order of installation, the game's handler
+        // runs first and kills us before our handler can recover. Re-installing
+        // here puts ours at the front again.
+        InstallCrashHandlerFirst();
         auto resP = std::make_shared<VkResult>(VK_TIMEOUT);
         auto fnHolder = std::make_shared<typename std::decay<F>::type>(std::forward<F>(f));
         auto call = [resP, fnHolder]() { *resP = static_cast<VkResult>((*fnHolder)()); };
@@ -6787,6 +6793,7 @@ vkCmdDraw(VkCommandBuffer cb, uint32_t vertexCount, uint32_t instanceCount, uint
 extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdDispatchIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset) {
     if (IsBoundComputeFake(cb)) return;
+    if (!buffer || IsFake(buffer)) return; // [CRASHFIX]
     auto real = RealExport<PFN_vkCmdDispatchIndirect>("vkCmdDispatchIndirect");
     if (real) real(cb, buffer, offset);
 }
@@ -6794,6 +6801,7 @@ vkCmdDispatchIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset) 
 extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdDrawIndirectCount(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride) {
     if (IsBoundPipelineFake(cb)) return;
+    if (!buffer || IsFake(buffer) || !countBuffer || IsFake(countBuffer)) return; // [CRASHFIX]
     auto real = RealExport<PFN_vkCmdDrawIndirectCount>("vkCmdDrawIndirectCount");
     if (real) real(cb, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
 }
@@ -6801,6 +6809,7 @@ vkCmdDrawIndirectCount(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset,
 extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdDrawIndexedIndirectCount(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride) {
     if (IsBoundPipelineFake(cb)) return;
+    if (!buffer || IsFake(buffer) || !countBuffer || IsFake(countBuffer)) return; // [CRASHFIX]
     auto real = RealExport<PFN_vkCmdDrawIndexedIndirectCount>("vkCmdDrawIndexedIndirectCount");
     if (real) real(cb, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
 }
@@ -6886,17 +6895,19 @@ vkCmdDispatch(VkCommandBuffer cb, uint32_t groupCountX, uint32_t groupCountY, ui
 }
 
 extern "C" VKAPI_ATTR void VKAPI_CALL
-vkCmdDrawIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t stride) {
+vkCmdDrawIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance) {
     if (IsBoundPipelineFake(cb)) return;
+    if (!buffer || IsFake(buffer)) return; // [CRASHFIX]
     auto real = RealExport<PFN_vkCmdDrawIndirect>("vkCmdDrawIndirect");
-    if (real) real(cb, buffer, offset, drawCount, stride);
+    if (real) real(cb, buffer, offset, drawCount, instanceCount, firstVertex, firstInstance);
 }
 
 extern "C" VKAPI_ATTR void VKAPI_CALL
-vkCmdDrawIndexedIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t stride) {
+vkCmdDrawIndexedIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t instanceCount, uint32_t firstIndex, int32_t vertexOffset, uint32_t firstInstance) {
     if (IsBoundPipelineFake(cb)) return;
+    if (!buffer || IsFake(buffer)) return; // [CRASHFIX]
     auto real = RealExport<PFN_vkCmdDrawIndexedIndirect>("vkCmdDrawIndexedIndirect");
-    if (real) real(cb, buffer, offset, drawCount, stride);
+    if (real) real(cb, buffer, offset, drawCount, instanceCount, firstIndex, vertexOffset, firstInstance);
 }
 
 
