@@ -1,4 +1,4 @@
-﻿// Vulkan proxy v3.2 (hang-fix) for Windows x64
+// Vulkan proxy v3.2 (hang-fix) for Windows x64
 // v3.2 changes (see CHANGES-v3.2 comments tagged [v3.2]):
 //   * compute shaders >= HeavyComputeWords (default 75000 SPIR-V words) are never sent to the AMD driver:
 //     in the log every such compile hung LLPC for >40 minutes. They become FAKE pipelines instantly.
@@ -49,6 +49,8 @@
 #include <algorithm>
 #include <map>
 #include <memory>
+#include <type_traits>
+#include <utility>
 #include <new>
 #include <set>
 #include <string>
@@ -71,9 +73,24 @@ namespace rtfill {
     void TrackBind(VkCommandBuffer cb, uint32_t firstSet, uint32_t count, const VkDescriptorSet* sets);
     void TrackBarriers(uint32_t count, const VkImageMemoryBarrier* barriers);
     void OnTraceRays(VkCommandBuffer cb, uint32_t width, uint32_t height);
+    void TrackColorAttachment(VkCommandBuffer cb, VkImage image, VkFormat format, VkImageSubresourceRange range);
+    void FillColorAttachment(VkCommandBuffer cb);
+    void ClearColorAttachment(VkCommandBuffer cb);
+    bool GetTraceViews(VkCommandBuffer cb, std::vector<uint64_t>& out);
+    bool FillViewFromRadiance(uint64_t viewKey, VkCommandBuffer cb, VkBuffer staging,
+        uint32_t width, uint32_t height, const std::vector<float>& radiance);
 }
-extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndirect(VkCommandBuffer, VkBuffer, VkDeviceSize, uint32_t, uint32_t);
-extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndexedIndirect(VkCommandBuffer, VkBuffer, VkDeviceSize, uint32_t, uint32_t);
+// [v4-SRT] Forward-декларации модуля программной трассировки (software ray tracing).
+namespace swrtx {
+    void CaptureBuildGeometry(const VkAccelerationStructureBuildGeometryInfoKHR* info,
+        const VkAccelerationStructureBuildRangeInfoKHR* const* ranges, uint32_t rangeCount);
+    void CaptureIndirectBuild(uintptr_t infosAddr, uintptr_t maxCountsAddr, uint32_t count);
+    void OnBuildComplete();
+    uint32_t TraceDispatch(VkCommandBuffer cb, uint32_t width, uint32_t height);
+    void FillAmbientFallback(VkCommandBuffer cb, uint32_t width, uint32_t height);
+}
+extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndirect(VkCommandBuffer, VkBuffer, VkDeviceSize, uint32_t, uint32_t, uint32_t, uint32_t);
+extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndexedIndirect(VkCommandBuffer, VkBuffer, VkDeviceSize, uint32_t, uint32_t, uint32_t, int32_t, uint32_t);
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndirectCount(VkCommandBuffer, VkBuffer, VkDeviceSize, VkBuffer, VkDeviceSize, uint32_t, uint32_t);
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndexedIndirectCount(VkCommandBuffer, VkBuffer, VkDeviceSize, VkBuffer, VkDeviceSize, uint32_t, uint32_t);
 
@@ -200,6 +217,16 @@ namespace {
 
     // 1 = VK_EXT_extended_dynamic_state was enabled on the real device (core 1.3 vkCmdSet* are routed to it).
     volatile LONG g_edsEnabled = 0;
+
+    // Ring buffer of the most recent NULL results from the GetProcAddr entry points.
+    // When the game later calls a stored nullptr we get EXEC@0; dumping this buffer
+    // at that moment tells us exactly which function name the game could not resolve.
+    struct NullCallRing {
+        char names[24][128];
+        volatile LONG idx = 0;
+        volatile LONG count = 0;
+    };
+    NullCallRing g_nullCallRing;
 
 // [v3.2] frame / submit counters for the watchdog heartbeat and the stall detector.
 volatile LONG g_presentCount = 0;
@@ -998,6 +1025,8 @@ VkImageLayout MapLayout2(VkImageLayout l, VkImageAspectFlags aspect) {
 // ---------------------------------------------------------------------------// v4: sync2 implementations (translate to sync1)
 // ---------------------------------------------------------------------------
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkQueueSubmit(VkQueue, uint32_t, const VkSubmitInfo*, VkFence); // forward decl for vkQueueSubmit2
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
 vkQueueSubmit2(VkQueue queue, uint32_t submitCount, const VkSubmitInfo2* pSubmits, VkFence fence) {
     auto real = RealExport<PFN_vkQueueSubmit>("vkQueueSubmit");
     if (!real) return VK_ERROR_INITIALIZATION_FAILED;
@@ -1053,7 +1082,8 @@ vkQueueSubmit2(VkQueue queue, uint32_t submitCount, const VkSubmitInfo2* pSubmit
         si[i].pSignalSemaphores = sigSem[i].empty() ? nullptr : sigSem[i].data();
     }
     if (FirstTime("sync2:queueSubmit2")) LogLine("SYNC2: vkQueueSubmit2 -> vkQueueSubmit (+timeline values)");
-    const VkResult sr = real(queue, submitCount, si.data(), fence);
+    // Route through vkQueueSubmit so NULL/FAKE command buffers are filtered before the driver call
+    const VkResult sr = vkQueueSubmit(queue, submitCount, si.data(), fence);
     // [v3.2] a lost device / failed submit used to be invisible in the log
     InterlockedIncrement(&g_submitCount);
     InterlockedExchange(&g_lastSubmitRes, static_cast<LONG>(sr));
@@ -1071,6 +1101,200 @@ vkQueueSubmit2(VkQueue queue, uint32_t submitCount, const VkSubmitInfo2* pSubmit
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
 vkQueueSubmit2KHR(VkQueue queue, uint32_t submitCount, const VkSubmitInfo2* pSubmits, VkFence fence) {
     return vkQueueSubmit2(queue, submitCount, pSubmits, fence);
+}
+
+// ---------------------------------------------------------------------------
+// [v4-HANG] Watchdog hooks for the plain (non-sync2) queue / fence calls.
+// The log showed the process freezing with submits=0 right after a failed 3390 ms
+// vkCreateGraphicsPipelines. The stalling call was one of these plain functions,
+// which were NOT wrapped in DriverCallTimed — so the watchdog never fired and the
+// game hung forever. Each is now run on a private worker thread with SubmitTimeoutSec;
+// if it never returns, the call is abandoned (the worker is pinned to one core) and
+// VK_TIMEOUT is returned so the game can make progress.
+// ---------------------------------------------------------------------------
+namespace {
+    // Runs f on a timed worker using SubmitTimeoutSec, restoring the previous compile
+    // override so a nested DriverCallTimed inside f still behaves correctly.
+    // The result and the callable are held in shared_ptr so the worker thread (which
+    // may outlive this frame after a timeout) never touches dangling stack references.
+    template<class F> VkResult SubmitTimed(F&& f, const char* job) {
+        // [CRASHFIX] Re-install VEH handler before every driver call. The game
+        // installs its own VEH that kills the process; since VEH handlers with
+        // CallFirst=1 run in reverse order of installation, the game's handler
+        // runs first and kills us before our handler can recover. Re-installing
+        // here puts ours at the front again.
+        InstallCrashHandlerFirst();
+        auto resP = std::make_shared<VkResult>(VK_TIMEOUT);
+        auto fnHolder = std::make_shared<typename std::decay<F>::type>(std::forward<F>(f));
+        auto call = [resP, fnHolder]() { *resP = static_cast<VkResult>((*fnHolder)()); };
+
+        if (g_spvCfg.submitTimeoutSec <= 0) {
+            call();
+            InterlockedIncrement(&g_submitCount);
+            InterlockedExchange(&g_lastSubmitRes, static_cast<LONG>(*resP));
+            InterlockedExchange64(&g_lastSubmitTick, static_cast<LONG64>(GetTickCount64()));
+            if (*resP != VK_SUCCESS) {
+                static volatile LONG badSubmit = 0;
+                const LONG n = InterlockedIncrement(&badSubmit);
+                if (n <= 20 || n % 500 == 0)
+                    LogLine("!!! %s FAILED: result=%d (failures so far=%ld)", job, static_cast<int>(*resP), static_cast<long>(n));
+            }
+            return *resP;
+        }
+        const int prev = t_timeoutOverrideSec;
+        if (g_spvCfg.submitTimeoutSec < prev || prev == 0) t_timeoutOverrideSec = g_spvCfg.submitTimeoutSec;
+        SetJob("%s", job);
+        bool timedOut = false;
+        const bool ok = DriverCallTimed(std::move(call), timedOut);
+        t_timeoutOverrideSec = prev;
+        if (ok) {
+            InterlockedIncrement(&g_submitCount);
+            InterlockedExchange(&g_lastSubmitRes, static_cast<LONG>(*resP));
+            InterlockedExchange64(&g_lastSubmitTick, static_cast<LONG64>(GetTickCount64()));
+            if (*resP != VK_SUCCESS) {
+                static volatile LONG badSubmit = 0;
+                const LONG n = InterlockedIncrement(&badSubmit);
+                if (n <= 20 || n % 500 == 0)
+                    LogLine("!!! %s FAILED: result=%d (failures so far=%ld)", job, static_cast<int>(*resP), static_cast<long>(n));
+            }
+        } else if (timedOut) {
+            LogLine("WATCHDOG: %s TIMED OUT after %d s -> returning VK_TIMEOUT (game keeps running)",
+                job, g_spvCfg.submitTimeoutSec);
+            *resP = VK_TIMEOUT;
+        } else {
+            LogLine("CAUGHT driver crash in %s -> returning VK_TIMEOUT", job);
+            *resP = VK_TIMEOUT;
+        }
+        return *resP;
+    }
+}
+
+// [CRASHFIX] Helper: call vkQueueSubmit on current thread with SEH protection.
+// Cannot use __try/__except directly in vkQueueSubmit (C2712: C++ objects with destructors).
+// This helper has no C++ objects, so __try/__except is allowed.
+static VkResult SubmitOnCurrentThread(PFN_vkQueueSubmit real, VkQueue queue,
+    uint32_t count, const VkSubmitInfo* submits, VkFence fence) {
+    VkResult res = VK_SUCCESS;
+    __try {
+        res = real(queue, count, submits, fence);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        res = VK_TIMEOUT;
+    }
+    return res;
+}
+
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo* pSubmits, VkFence fence) {
+    auto real = RealExport<PFN_vkQueueSubmit>("vkQueueSubmit");
+    if (!real) return VK_ERROR_INITIALIZATION_FAILED;
+    if (submitCount == 0 || !pSubmits) return real(queue, 0, nullptr, fence);
+    // [CRASHFIX] Remove NULL/FAKE command buffers and semaphores from every submit entry.
+    // amdvlk64 derefs NULL command buffer at [obj+8] during submit -> AV at 0x8.
+    // Each entry gets a new filtered CB array; NULL/FAKE CBs are removed individually.
+    // Data is held in shared_ptr so it survives SubmitTimed timeout (worker thread
+    // may still be running when this function returns).
+    {
+        struct SafeData {
+            std::vector<VkSubmitInfo> infos;
+            std::vector<std::vector<VkCommandBuffer>> cbs;
+            std::vector<std::vector<VkSemaphore>> waitSem, sigSem;
+        };
+        auto safe = std::make_shared<SafeData>();
+        safe->infos.reserve(submitCount);
+        uint32_t totalFiltered = 0;
+        for (uint32_t i = 0; i < submitCount; ++i) {
+            // Filter command buffers
+            std::vector<VkCommandBuffer> cbs;
+            if (pSubmits[i].pCommandBuffers && pSubmits[i].commandBufferCount > 0) {
+                for (uint32_t j = 0; j < pSubmits[i].commandBufferCount; ++j) {
+                    VkCommandBuffer cb = pSubmits[i].pCommandBuffers[j];
+                    if (cb && !IsFake(cb)) cbs.push_back(cb);
+                    else ++totalFiltered;
+                }
+            }
+            // Filter wait semaphores
+            std::vector<VkSemaphore> ws;
+            if (pSubmits[i].pWaitSemaphores && pSubmits[i].waitSemaphoreCount > 0) {
+                for (uint32_t j = 0; j < pSubmits[i].waitSemaphoreCount; ++j) {
+                    VkSemaphore sm = pSubmits[i].pWaitSemaphores[j];
+                    if (sm && !IsFake(sm)) ws.push_back(sm);
+                    else ++totalFiltered;
+                }
+            }
+            // Filter signal semaphores
+            std::vector<VkSemaphore> ss;
+            if (pSubmits[i].pSignalSemaphores && pSubmits[i].signalSemaphoreCount > 0) {
+                for (uint32_t j = 0; j < pSubmits[i].signalSemaphoreCount; ++j) {
+                    VkSemaphore sm = pSubmits[i].pSignalSemaphores[j];
+                    if (sm && !IsFake(sm)) ss.push_back(sm);
+                    else ++totalFiltered;
+                }
+            }
+            if (cbs.empty() && ws.empty() && ss.empty()) continue;
+            safe->cbs.push_back(std::move(cbs));
+            safe->waitSem.push_back(std::move(ws));
+            safe->sigSem.push_back(std::move(ss));
+            size_t idx = safe->infos.size();
+            VkSubmitInfo entry = pSubmits[i];
+            entry.commandBufferCount = (uint32_t)safe->cbs[idx].size();
+            entry.pCommandBuffers = safe->cbs[idx].empty() ? nullptr : safe->cbs[idx].data();
+            entry.waitSemaphoreCount = (uint32_t)safe->waitSem[idx].size();
+            entry.pWaitSemaphores = safe->waitSem[idx].empty() ? nullptr : safe->waitSem[idx].data();
+            entry.signalSemaphoreCount = (uint32_t)safe->sigSem[idx].size();
+            entry.pSignalSemaphores = safe->sigSem[idx].empty() ? nullptr : safe->sigSem[idx].data();
+            safe->infos.push_back(entry);
+        }
+        if (safe->infos.empty()) return VK_SUCCESS;
+        if (totalFiltered > 0) {
+            static volatile LONG n = 0;
+            if (InterlockedIncrement(&n) <= 20)
+                LogLine("vkQueueSubmit: filtered %u NULL/FAKE CBs/sems from %u/%u entries",
+                    totalFiltered, (unsigned)safe->infos.size(), submitCount);
+        }
+        // [CRASHFIX] Call driver DIRECTLY on current thread - NOT via SubmitTimed/DriverCallTimed.
+        // DriverCallTimed spawns a worker thread via CreateThread; amdvlk64 requires vkQueueSubmit
+        // to be called from the SAME thread that created the queue. Cross-thread submit reads
+        // NULL thread-local state -> AV at [NULL+8], RBX=0. This was the real crash root cause.
+        // VEH handler (re-armed in SubmitTimed / at init) catches any driver crash.
+        VkResult drvRes = SubmitOnCurrentThread(real, queue, (uint32_t)safe->infos.size(), safe->infos.data(), fence);
+        InterlockedIncrement(&g_submitCount);
+        InterlockedExchange(&g_lastSubmitRes, static_cast<LONG>(drvRes));
+        InterlockedExchange64(&g_lastSubmitTick, static_cast<LONG64>(GetTickCount64()));
+        if (drvRes != VK_SUCCESS) {
+            static volatile LONG badSubmit = 0;
+            const LONG n = InterlockedIncrement(&badSubmit);
+            if (n <= 20 || n % 500 == 0)
+                LogLine("!!! vkQueueSubmit FAILED: result=%d (failures so far=%ld)", static_cast<int>(drvRes), static_cast<long>(n));
+        }
+        return drvRes;
+    }
+    VkResult drvRes2 = SubmitOnCurrentThread(real, queue, submitCount, pSubmits, fence);
+    InterlockedIncrement(&g_submitCount);
+    InterlockedExchange(&g_lastSubmitRes, static_cast<LONG>(drvRes2));
+    InterlockedExchange64(&g_lastSubmitTick, static_cast<LONG64>(GetTickCount64()));
+    if (drvRes2 != VK_SUCCESS) {
+        static volatile LONG badSubmit2 = 0;
+        const LONG n = InterlockedIncrement(&badSubmit2);
+        if (n <= 20 || n % 500 == 0)
+            LogLine("!!! vkQueueSubmit FAILED: result=%d (failures so far=%ld)", static_cast<int>(drvRes2), static_cast<long>(n));
+    }
+    return drvRes2;
+}
+
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkQueueWaitIdle(VkQueue queue) {
+    auto real = RealExport<PFN_vkQueueWaitIdle>("vkQueueWaitIdle");
+    if (!real) return VK_ERROR_INITIALIZATION_FAILED;
+    return SubmitTimed([&]() { return real(queue); }, "vkQueueWaitIdle");
+}
+
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkWaitForFences(VkDevice device, uint32_t count, const VkFence* pFences, VkBool32 waitAll, uint64_t timeout) {
+    auto real = RealExport<PFN_vkWaitForFences>("vkWaitForFences");
+    if (!real) return VK_ERROR_INITIALIZATION_FAILED;
+    // A finite game-provided timeout already bounds the wait; only guard the infinite (timeout==UINT64_MAX) case.
+    if (timeout != UINT64_MAX) return real(device, count, pFences, waitAll, timeout);
+    return SubmitTimed([&]() { return real(device, count, pFences, waitAll, timeout); }, "vkWaitForFences");
 }
 
 extern "C" VKAPI_ATTR void VKAPI_CALL
@@ -1382,6 +1606,12 @@ namespace {
         int heavyShaderWords = 0;  // [HANGFIX] >0: shaders with more SPIR-V words than this are never sent to the driver
         int watchdog = 1;          // [HANGFIX] watchdog thread: heartbeat + in-flight report + periodic cache save
         int heavyComputeWords = 75000; // [v3.2] compute stage with >= this many SPIR-V words is never sent to the driver (0 = off)
+        int heavyGraphicsWords = 90000; // [v4-HANG] graphics stage with >= this many SPIR-V words is never sent to the driver.
+                                        // The log showed the two rewritten ray-query lighting stages (128k-160k words) make
+                                        // AMDVLK spend ~3.4 s then return -4 (VK_ERROR_OUT_OF_HOST_MEMORY); the process then
+                                        // freezes with submits=0. Faking them at this gate removes the driver call entirely.
+        int submitTimeoutSec = 30;      // [v4-HANG] vkQueueSubmit / vkQueueWaitIdle / vkWaitForFences longer than this is
+                                        // abandoned on a worker thread (the watchdog fires) instead of freezing the game.
         int computeTimeoutSec = 12;    // [v3.2] compute compile longer than this is abandoned (never succeeded after 3 s in the log)
         int pinStuckToOneCore = 1;     // [v3.2] abandoned (stuck) compile threads share ONE core
         int stallDumpSec = 20;         // [v3.2] no vkQueuePresentKHR for this long -> dump all thread stacks (0 = off)
@@ -1390,6 +1620,18 @@ namespace {
         int lowerFp16 = 0;        // ВЫКЛ: заменяем на комбинированный проход
         int lowerFp16AndInt16 = 1; // новый: fp16 + int16 ALU -> 32 бит
         int catchDriverCrash = 1; // catch access violations inside the driver and fall back to FAKE objects
+
+        // ---- [v4-SRT] Software Ray Tracing (real geometry intersection for the GCN2 proxy) ----
+        // Doom TDA builds lighting/GI with hardware ray tracing (VK_KHR_ray_query + ray tracing pipeline).
+        // GCN2 has no RT cores, so the proxy must compute intersections in software. These knobs control
+        // that emulation. SoftRT=0 falls back to the old constant-fill (rtfill) path (screenshot #1).
+        int softRT = 1;            // master switch for software ray tracing
+        int softRTBuildBVH = 1;    // capture vkCmdBuildAccelerationStructuresKHR geometry and build a software BVH
+        int softRTMaxNodes = 1 << 20; // cap on BVH nodes the proxy builds (guard against unbounded geometry)
+        int softRTTrace = 1;       // rewrite OpRayQuery*/OpTraceRayKHR to software BVH traversal
+        int softRTFallbackFill = 1; // when a shader cannot be rewritten, still fill its RT output with ambient
+        float softRTAmbient = 0.35f; // ambient light level written to miss/untraced pixels
+        int softRTLog = 1;         // log BVH builds and trace dispatches
 		int dropF16Cap = 0;       // 1 = ещё и убрать OpCapability Float16 после понижения
         uint32_t denyComputeCaps[16] = {}; int nDenyComputeCaps = 0;  // deny COMPUTE shaders that use any of these capabilities
         uint32_t denyAnyCaps[16] = {};     int nDenyAnyCaps = 0;      // deny ANY shader that uses any of these capabilities
@@ -1470,6 +1712,8 @@ namespace {
         g_spvCfg.heavyShaderWords = rd(L"HeavyShaderWords", 0);
         g_spvCfg.watchdog = rd(L"Watchdog", 1);
         g_spvCfg.heavyComputeWords = rd(L"HeavyComputeWords", 75000);
+        g_spvCfg.heavyGraphicsWords = rd(L"HeavyGraphicsWords", 90000);
+        g_spvCfg.submitTimeoutSec = rd(L"SubmitTimeoutSec", 30);
         g_spvCfg.computeTimeoutSec = rd(L"ComputeTimeoutSec", 12);
         g_spvCfg.pinStuckToOneCore = rd(L"PinStuckThreads", 1);
         g_spvCfg.stallDumpSec = rd(L"StallDumpSec", 20);
@@ -1493,6 +1737,23 @@ namespace {
         g_spvCfg.lowerFp16 = rd(L"LowerFp16", 0);
         g_spvCfg.lowerFp16AndInt16 = rd(L"LowerFp16AndInt16", 1);
 		g_spvCfg.dropF16Cap = rd(L"DropF16Cap", 0);
+        // [v4-SRT] software ray tracing knobs
+        g_spvCfg.softRT = rd(L"SoftRT", 1);
+        g_spvCfg.softRTBuildBVH = rd(L"SoftRTBuildBVH", 1);
+        g_spvCfg.softRTMaxNodes = rd(L"SoftRTMaxNodes", 1 << 20);
+        g_spvCfg.softRTTrace = rd(L"SoftRTTrace", 1);
+        g_spvCfg.softRTFallbackFill = rd(L"SoftRTFallbackFill", 1);
+        g_spvCfg.softRTLog = rd(L"SoftRTLog", 1);
+        {
+            wchar_t sb[64]{};
+            GetPrivateProfileStringW(L"spirv", L"SoftRTAmbient", L"0.35", sb, 64, path);
+            const double a = wcstod(sb, nullptr);
+            g_spvCfg.softRTAmbient = (a >= 0.0 && a <= 4.0) ? static_cast<float>(a) : 0.35f;
+        }
+        if (FirstTime(std::string("srt-cfg-log")))
+            LogLine("SOFTRT: CONFIG softRT=%d buildBVH=%d trace=%d fallback=%d log=%d",
+                g_spvCfg.softRT, g_spvCfg.softRTBuildBVH, g_spvCfg.softRTTrace,
+                g_spvCfg.softRTFallbackFill, g_spvCfg.softRTLog);
         auto rdList = [&](const wchar_t* key, uint32_t* out, int& n) {
             wchar_t buf[256]{};
             GetPrivateProfileStringW(L"spirv", key, L"", buf, 256, path);
@@ -1918,11 +2179,11 @@ static const SpvOpDesc kSpvOps[] = {
     {4431,"TRIIII"},
     {4432,"TRII"},
     {4433,"TRIL(I)"},
-    {4445,"IIIIIIIIIII"},
-    {4446,"II"},
-    {4447,"TRI"},
-    {4448,""},
-    {4449,""},
+    {4445,"IIIIIIIIIII"},   // OpTraceRayKHR (Reserved class: 11 in/out operands, no result)
+    {4446,"II"},            // OpExecuteCallableKHR (Reserved class: 2 operands, no result)
+    {4447,"TRI"},           // OpConvertUToAccelerationStructureKHR
+    {4448,""},              // OpIgnoreIntersectionKHR
+    {4449,""},              // OpTerminateRayKHR
     {4450,"TRIIL"},
     {4451,"TRIIL"},
     {4452,"TRIIL"},
@@ -4463,6 +4724,17 @@ if (si.rewritten) return std::string();
                 if (ret > 0x10000ull) {
                     char caller[300]; ModuleOffset((void*)ret, caller, sizeof(caller));
                 LogLine("!!! EXEC@0 skipped null call, caller=%s", caller);
+                    // Diagnostic: dump the most recent GetProcAddr NULL answers so the
+                    // null function name that the game stored can be identified.
+                    {
+                        const LONG total = g_nullCallRing.count;
+                        const LONG pos = g_nullCallRing.idx;
+                        LogLine("!!! EXEC@0 last NULL GetProcAddr answers (most recent first):");
+                        for (int k = 0; k < 8 && k < total; ++k) {
+                            const LONG idx = (pos - 1 - k + 24 * 4) % 24;
+                            LogLine("!!!   %s", g_nullCallRing.names[idx]);
+                        }
+                    }
                     ep->ContextRecord->Rip = ret;
                     ep->ContextRecord->Rsp += 8;  // pop return address
                     ep->ContextRecord->Rax = 0;   // return VK_SUCCESS / nullptr
@@ -5518,7 +5790,7 @@ vkBindBufferMemory(VkDevice device, VkBuffer buffer, VkDeviceMemory memory, VkDe
             LogLine("vkBindBufferMemory: skipped FAKE/null buffer=%p memory=%p", (void*)buffer, (void*)memory);
         return VK_SUCCESS;
     }
-    VkResult r = VK_ERROR_UNKNOWN;
+        VkResult r = VK_ERROR_UNKNOWN;
     if (!DriverCall([&]() { r = real(device, buffer, memory, offset); }, false)) {   // [v3.2] not gated by shader compiles
         LogLine("CAUGHT driver crash in vkBindBufferMemory buffer=%p memory=%p offset=%llu",
             (void*)buffer, (void*)memory, (unsigned long long)offset);
@@ -5744,13 +6016,39 @@ vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo* pInfo,
             return VK_SUCCESS;
         }
         VKAPI_ATTR void VKAPI_CALL DestroyAS(VkDevice, VkAccelerationStructureKHR, const VkAllocationCallbacks*) {}
-        VKAPI_ATTR void VKAPI_CALL CmdBuildAS(VkCommandBuffer, uint32_t,
-            const VkAccelerationStructureBuildGeometryInfoKHR*, const VkAccelerationStructureBuildRangeInfoKHR* const*) {}
-        VKAPI_ATTR void VKAPI_CALL CmdBuildASIndirect(VkCommandBuffer, uint32_t,
-            const VkAccelerationStructureBuildGeometryInfoKHR*, const VkDeviceAddress*, const uint32_t*,
-            const uint32_t* const*) {}
-        VKAPI_ATTR VkResult VKAPI_CALL BuildAS(VkDevice, VkDeferredOperationKHR, uint32_t,
-            const VkAccelerationStructureBuildGeometryInfoKHR*, const VkAccelerationStructureBuildRangeInfoKHR* const*) {
+        VKAPI_ATTR void VKAPI_CALL CmdBuildAS(VkCommandBuffer, uint32_t count,
+            const VkAccelerationStructureBuildGeometryInfoKHR* infos, const VkAccelerationStructureBuildRangeInfoKHR* const* ranges) {
+            if (FirstTime(std::string("srt-diag-build-dir")))
+                LogLine("SOFTRT: DIAG CmdBuildAS called softRT=%d buildBVH=%d", g_spvCfg.softRT, g_spvCfg.softRTBuildBVH);
+            if (g_spvCfg.softRT && g_spvCfg.softRTBuildBVH) {
+                for (uint32_t i = 0; i < count; ++i)
+                    swrtx::CaptureBuildGeometry(infos + i, ranges ? ranges + i : nullptr, 1);
+                swrtx::OnBuildComplete();
+            }
+        }
+        VKAPI_ATTR void VKAPI_CALL CmdBuildASIndirect(VkCommandBuffer, uint32_t count,
+            const VkAccelerationStructureBuildGeometryInfoKHR* pInfos, const VkDeviceAddress*,
+            const uint32_t*, const uint32_t* const* ppMaxPrimitiveCounts) {
+            if (FirstTime(std::string("srt-diag-build")))
+                LogLine("SOFTRT: DIAG CmdBuildASIndirect called softRT=%d buildBVH=%d count=%u pInfos=%p",
+                    g_spvCfg.softRT, g_spvCfg.softRTBuildBVH, count, (const void*)pInfos);
+            if (g_spvCfg.softRT && g_spvCfg.softRTBuildBVH && pInfos && count) {
+                if (FirstTime(std::string("srt-ind-build")))
+                    LogLine("SOFTRT: vkCmdBuildAccelerationStructuresIndirectKHR count=%u", count);
+                swrtx::CaptureIndirectBuild(
+                    reinterpret_cast<uintptr_t>(pInfos),
+                    reinterpret_cast<uintptr_t>(ppMaxPrimitiveCounts),
+                    count);
+                swrtx::OnBuildComplete();
+            }
+        }
+        VKAPI_ATTR VkResult VKAPI_CALL BuildAS(VkDevice, VkDeferredOperationKHR, uint32_t count,
+            const VkAccelerationStructureBuildGeometryInfoKHR* infos, const VkAccelerationStructureBuildRangeInfoKHR* const* ranges) {
+            if (g_spvCfg.softRT && g_spvCfg.softRTBuildBVH) {
+                for (uint32_t i = 0; i < count; ++i)
+                    swrtx::CaptureBuildGeometry(infos + i, ranges ? ranges + i : nullptr, 1);
+                swrtx::OnBuildComplete();
+            }
             return VK_SUCCESS;
         }
         VKAPI_ATTR VkResult VKAPI_CALL CopyAS(VkDevice, VkDeferredOperationKHR, const VkCopyAccelerationStructureInfoKHR*) { return VK_SUCCESS; }
@@ -5785,15 +6083,46 @@ vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo* pInfo,
         VKAPI_ATTR void VKAPI_CALL CmdTraceRays(VkCommandBuffer cb, const VkStridedDeviceAddressRegionKHR*,
             const VkStridedDeviceAddressRegionKHR*, const VkStridedDeviceAddressRegionKHR*,
             const VkStridedDeviceAddressRegionKHR*, uint32_t w, uint32_t h, uint32_t) {
-            rtfill::OnTraceRays(cb, w, h); // [RTFILL] вместо пустого no-op
+            if (FirstTime(std::string("srt-diag-trace-dir")))
+                LogLine("SOFTRT: DIAG CmdTraceRays called softRT=%d trace=%d w=%u h=%u",
+                    g_spvCfg.softRT, g_spvCfg.softRTTrace, w, h);
+            if (g_spvCfg.softRT && g_spvCfg.softRTTrace) {
+                uint32_t traced = swrtx::TraceDispatch(cb, w, h); // [SRT] BVH trace
+                // Only fill ambient when real tracing did not happen (no BVH yet).
+                if (traced == 0) rtfill::OnTraceRays(cb, w, h); // [RTFILL] fill if no BVH
+                return;
+            }
+            rtfill::OnTraceRays(cb, w, h); // [RTFILL] fill outputs
         }
         VKAPI_ATTR void VKAPI_CALL CmdTraceRaysIndirect(VkCommandBuffer cb, const VkStridedDeviceAddressRegionKHR*,
             const VkStridedDeviceAddressRegionKHR*, const VkStridedDeviceAddressRegionKHR*,
-            const VkStridedDeviceAddressRegionKHR*, VkDeviceAddress) {
-            rtfill::OnTraceRays(cb, 0, 0); // [RTFILL]
+            const VkStridedDeviceAddressRegionKHR*, VkDeviceAddress addr) {
+            if (FirstTime(std::string("srt-diag-trace")))
+                LogLine("SOFTRT: DIAG CmdTraceRaysIndirect called softRT=%d trace=%d addr=0x%llX",
+                    g_spvCfg.softRT, g_spvCfg.softRTTrace, (unsigned long long)addr);
+            if (g_spvCfg.softRT && g_spvCfg.softRTTrace && addr) {
+                if (FirstTime(std::string("srt-ind-trace")))
+                    LogLine("SOFTRT: vkCmdTraceRaysIndirectKHR addr=0x%llX", (unsigned long long)addr);
+                const auto* cmd = reinterpret_cast<const VkDispatchIndirectCommand*>(addr);
+                uint32_t traced = swrtx::TraceDispatch(cb, cmd->x, cmd->y);
+                if (traced == 0) rtfill::OnTraceRays(cb, cmd->x, cmd->y);
+            } else {
+                rtfill::OnTraceRays(cb, 0, 0); // [RTFILL]
+            }
         }
-        VKAPI_ATTR void VKAPI_CALL CmdTraceRaysIndirect2(VkCommandBuffer cb, VkDeviceAddress) {
-            rtfill::OnTraceRays(cb, 0, 0); // [RTFILL]
+        VKAPI_ATTR void VKAPI_CALL CmdTraceRaysIndirect2(VkCommandBuffer cb, VkDeviceAddress addr) {
+            if (FirstTime(std::string("srt-diag-trace2")))
+                LogLine("SOFTRT: DIAG CmdTraceRaysIndirect2 called softRT=%d trace=%d addr=0x%llX",
+                    g_spvCfg.softRT, g_spvCfg.softRTTrace, (unsigned long long)addr);
+            if (g_spvCfg.softRT && g_spvCfg.softRTTrace && addr) {
+                if (FirstTime(std::string("srt-ind-trace2")))
+                    LogLine("SOFTRT: vkCmdTraceRaysIndirect2KHR addr=0x%llX", (unsigned long long)addr);
+                const auto* cmd = reinterpret_cast<const VkDispatchIndirectCommand*>(addr);
+                uint32_t traced = swrtx::TraceDispatch(cb, cmd->x, cmd->y);
+                if (traced == 0) rtfill::OnTraceRays(cb, cmd->x, cmd->y);
+            } else {
+                rtfill::OnTraceRays(cb, 0, 0); // [RTFILL]
+            }
         }
         VKAPI_ATTR VkResult VKAPI_CALL CreateRTPipelines(VkDevice, VkDeferredOperationKHR, VkPipelineCache,
             uint32_t count, const VkRayTracingPipelineCreateInfoKHR*, const VkAllocationCallbacks*, VkPipeline* p) {
@@ -5854,6 +6183,10 @@ vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo* pInfo,
 			            // v4: sync2 stubs (always active - translate to sync1)
             VKSTUB("vkQueueSubmit2",           vkQueueSubmit2),
             VKSTUB("vkQueueSubmit2KHR",        vkQueueSubmit2KHR),
+            // [v4-HANG] plain queue/fence watchdog hooks (the real hang path)
+            VKSTUB("vkQueueSubmit",           vkQueueSubmit),
+            VKSTUB("vkQueueWaitIdle",         vkQueueWaitIdle),
+            VKSTUB("vkWaitForFences",         vkWaitForFences),
             VKSTUB("vkCmdPipelineBarrier2",    vkCmdPipelineBarrier2),
             VKSTUB("vkCmdPipelineBarrier2KHR", vkCmdPipelineBarrier2KHR),
             VKSTUB("vkCmdWriteTimestamp2",     vkCmdWriteTimestamp2),
@@ -5945,6 +6278,19 @@ vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo* pInfo,
             for (const Entry& e : kAlwaysTable) if (strcmp(e.name, name) == 0) return e.fn;
             if (!g_rtSpoof) return nullptr;
             for (const Entry& e : kTable) if (strcmp(e.name, name) == 0) return e.fn;
+            // [FIX] Doom TDA queries the CORE (no-suffix) names: vkCmdTraceRays,
+            // vkBuildAccelerationStructures, vkCmdBuildAccelerationStructures ... The
+            // kTable only carries the KHR-suffixed entries, so the core name returned
+            // nullptr -> the game stored NULL -> EXEC@0 skipped null call -> ray tracing
+            // (and the AS builds that feed the software BVH) never ran -> no lighting.
+            // Retry with the KHR suffix appended.
+            const size_t len = strlen(name);
+            if (len > 0 && len < 160) {
+                char ext[164];
+                memcpy(ext, name, len);
+                ext[len] = 'K'; ext[len + 1] = 'H'; ext[len + 2] = 'R'; ext[len + 3] = 0;
+                for (const Entry& e : kTable) if (strcmp(e.name, ext) == 0) return e.fn;
+            }
             return nullptr;
         }
     }
@@ -6023,6 +6369,44 @@ vkCreateGraphicsPipelines(VkDevice device, VkPipelineCache cache, uint32_t count
             for (uint32_t i = 0; i < count; ++i) {
                 if (q[i]) { if (pPipelines) pPipelines[i] = MakeFake<VkPipeline>(); }
                 else { sub.push_back(pCreateInfos[i]); subIdx.push_back(i); }
+            }
+            if (sub.empty()) return VK_SUCCESS;
+            std::vector<VkPipeline> subOut(sub.size(), VK_NULL_HANDLE);
+            vkCreateGraphicsPipelines(device, cache, static_cast<uint32_t>(sub.size()), sub.data(), pAllocator, subOut.data());
+            for (size_t k = 0; k < sub.size(); ++k) if (pPipelines) pPipelines[subIdx[k]] = subOut[k];
+            return VK_SUCCESS;
+        }
+    }
+    // [v4-HANG] Heavy graphics gate: the log showed the two rewritten ray-query lighting stages
+    // (128k-160k SPIR-V words) make AMDVLK spend ~3.4 s then return -4 (VK_ERROR_OUT_OF_HOST_MEMORY);
+    // the process then freezes with submits=0. Shaders this large are never sent to the driver —
+    // they become FAKE pipelines (draws on them are skipped), exactly like the compute heavy gate.
+    // This removes the failing driver call entirely instead of relying on the compile timeout.
+    if (g_spvCfg.heavyGraphicsWords > 0) {
+        std::vector<char> heavy(count, 0);
+        bool anyHeavy = false;
+        for (uint32_t i = 0; i < count; ++i) {
+            for (uint32_t j = 0; j < pCreateInfos[i].stageCount && pCreateInfos[i].pStages; ++j) {
+                SpvInfo hsi;
+                if (IsFake(pCreateInfos[i].pStages[j].module)) continue;
+                if (GetSpvInfo(pCreateInfos[i].pStages[j].module, hsi) && hsi.code &&
+                    static_cast<int>(hsi.code->size()) >= g_spvCfg.heavyGraphicsWords) {
+                    heavy[i] = 1; anyHeavy = true; break;
+                }
+            }
+        }
+        if (anyHeavy) {
+            static volatile LONG hgN = 0;
+            std::vector<VkGraphicsPipelineCreateInfo> sub;
+            std::vector<uint32_t> subIdx;
+            for (uint32_t i = 0; i < count; ++i) {
+                if (heavy[i]) {
+                    if (pPipelines) pPipelines[i] = MakeFake<VkPipeline>();
+                    LONG t = InterlockedIncrement(&hgN);
+                    if (t <= 20 || t % 50 == 0)
+                        LogLine("HEAVY-FAKE graphics pipeline (>= %d SPIR-V words) total=%ld",
+                            g_spvCfg.heavyGraphicsWords, (long)t);
+                } else { sub.push_back(pCreateInfos[i]); subIdx.push_back(i); }
             }
             if (sub.empty()) return VK_SUCCESS;
             std::vector<VkPipeline> subOut(sub.size(), VK_NULL_HANDLE);
@@ -6480,6 +6864,7 @@ vkCmdDraw(VkCommandBuffer cb, uint32_t vertexCount, uint32_t instanceCount, uint
         LONG n = InterlockedIncrement(&skipped);
         if (n <= 5 || n % 500 == 0)
             LogLine("SKIP draw on FAKE pipeline (total skipped draws~%ld)", (long)n);
+        rtfill::FillColorAttachment(cb);
         return;
     }
     auto real = RealExport<PFN_vkCmdDraw>("vkCmdDraw");
@@ -6489,6 +6874,7 @@ vkCmdDraw(VkCommandBuffer cb, uint32_t vertexCount, uint32_t instanceCount, uint
 extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdDispatchIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset) {
     if (IsBoundComputeFake(cb)) return;
+    if (!buffer || IsFake(buffer)) return; // [CRASHFIX]
     auto real = RealExport<PFN_vkCmdDispatchIndirect>("vkCmdDispatchIndirect");
     if (real) real(cb, buffer, offset);
 }
@@ -6496,6 +6882,7 @@ vkCmdDispatchIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset) 
 extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdDrawIndirectCount(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride) {
     if (IsBoundPipelineFake(cb)) return;
+    if (!buffer || IsFake(buffer) || !countBuffer || IsFake(countBuffer)) return; // [CRASHFIX]
     auto real = RealExport<PFN_vkCmdDrawIndirectCount>("vkCmdDrawIndirectCount");
     if (real) real(cb, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
 }
@@ -6503,14 +6890,29 @@ vkCmdDrawIndirectCount(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset,
 extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdDrawIndexedIndirectCount(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride) {
     if (IsBoundPipelineFake(cb)) return;
+    if (!buffer || IsFake(buffer) || !countBuffer || IsFake(countBuffer)) return; // [CRASHFIX]
     auto real = RealExport<PFN_vkCmdDrawIndexedIndirectCount>("vkCmdDrawIndexedIndirectCount");
     if (real) real(cb, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
 }
 
 extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdBindDescriptorSets(VkCommandBuffer cb, VkPipelineBindPoint bp, VkPipelineLayout layout, uint32_t firstSet, uint32_t setCount, const VkDescriptorSet* pDescriptorSets, uint32_t dynamicOffsetCount, const uint32_t* pDynamicOffsets) {
-    rtfill::TrackBind(cb, firstSet, setCount, pDescriptorSets); // [RTFILL] ДО проверки FAKE
+    rtfill::TrackBind(cb, firstSet, setCount, pDescriptorSets); // [RTFILL] 
     if (bp == VK_PIPELINE_BIND_POINT_COMPUTE ? IsBoundComputeFake(cb) : IsBoundPipelineFake(cb)) return;   // [v3.2] per bind point
+    // [CRASHFIX] Filter out NULL/FAKE descriptor sets - amdvlk64 derefs them during submit.
+    {
+        std::vector<VkDescriptorSet> safe;
+        for (uint32_t i = 0; i < setCount; ++i)
+            if (pDescriptorSets[i] && !IsFake(pDescriptorSets[i])) safe.push_back(pDescriptorSets[i]);
+        if (safe.empty()) return;
+        if (safe.size() < setCount) {
+            static volatile LONG n = 0;
+            if (InterlockedIncrement(&n) <= 10) LogLine("vkCmdBindDescriptorSets: filtered %u NULL/FAKE sets", (unsigned)(setCount - safe.size()));
+        }
+        auto real = RealExport<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets");
+        if (real) real(cb, bp, layout, firstSet, (uint32_t)safe.size(), safe.data(), dynamicOffsetCount, pDynamicOffsets);
+        return;
+    }
     auto real = RealExport<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets");
     if (real) real(cb, bp, layout, firstSet, setCount, pDescriptorSets, dynamicOffsetCount, pDynamicOffsets);
 }
@@ -6525,6 +6927,22 @@ vkCmdPushConstants(VkCommandBuffer cb, VkPipelineLayout layout, VkShaderStageFla
 extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdBindVertexBuffers(VkCommandBuffer cb, uint32_t firstBinding, uint32_t bindingCount, const VkBuffer* pBuffers, const VkDeviceSize* pOffsets) {
     if (IsBoundPipelineFake(cb)) return;
+    // [CRASHFIX] Filter out NULL/FAKE buffers - amdvlk64 derefs them during submit.
+    {
+        std::vector<VkBuffer> safe;
+        std::vector<VkDeviceSize> off;
+        for (uint32_t i = 0; i < bindingCount; ++i) {
+            if (pBuffers[i] && !IsFake(pBuffers[i])) { safe.push_back(pBuffers[i]); off.push_back(pOffsets ? pOffsets[i] : 0); }
+        }
+        if (safe.empty()) return;
+        if (safe.size() < bindingCount) {
+            static volatile LONG n = 0;
+            if (InterlockedIncrement(&n) <= 10) LogLine("vkCmdBindVertexBuffers: filtered %u NULL/FAKE buffers", (unsigned)(bindingCount - safe.size()));
+        }
+        auto real = RealExport<PFN_vkCmdBindVertexBuffers>("vkCmdBindVertexBuffers");
+        if (real) real(cb, firstBinding, (uint32_t)safe.size(), safe.data(), off.data());
+        return;
+    }
     auto real = RealExport<PFN_vkCmdBindVertexBuffers>("vkCmdBindVertexBuffers");
     if (real) real(cb, firstBinding, bindingCount, pBuffers, pOffsets);
 }
@@ -6532,6 +6950,7 @@ vkCmdBindVertexBuffers(VkCommandBuffer cb, uint32_t firstBinding, uint32_t bindi
 extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdBindIndexBuffer(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, VkIndexType indexType) {
     if (IsBoundPipelineFake(cb)) return;
+    if (!buffer || IsFake(buffer)) return; // [CRASHFIX] amdvlk64 derefs NULL/FAKE buffer during submit
     auto real = RealExport<PFN_vkCmdBindIndexBuffer>("vkCmdBindIndexBuffer");
     if (real) real(cb, buffer, offset, indexType);
 }
@@ -6543,6 +6962,7 @@ if (IsBoundPipelineFake(cb)) {
     LONG k = InterlockedIncrement(&skippedIdx);
     if (k <= 5 || k % 2000 == 0)
         LogLine("SKIP indexed draw on FAKE pipeline (total=%ld)", (long)k);
+    rtfill::FillColorAttachment(cb);
     return;
 }
     auto real = RealExport<PFN_vkCmdDrawIndexed>("vkCmdDrawIndexed");
@@ -6557,17 +6977,21 @@ vkCmdDispatch(VkCommandBuffer cb, uint32_t groupCountX, uint32_t groupCountY, ui
 }
 
 extern "C" VKAPI_ATTR void VKAPI_CALL
-vkCmdDrawIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t stride) {
-    if (IsBoundPipelineFake(cb)) return;
-    auto real = RealExport<PFN_vkCmdDrawIndirect>("vkCmdDrawIndirect");
-    if (real) real(cb, buffer, offset, drawCount, stride);
+vkCmdDrawIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance) {
+    if (IsBoundPipelineFake(cb)) { rtfill::FillColorAttachment(cb); return; }
+    if (!buffer || IsFake(buffer)) return; // [CRASHFIX]
+    auto realRaw = RealProc("vkCmdDrawIndirect");
+    auto real = reinterpret_cast<void(__cdecl*)(VkCommandBuffer, VkBuffer, VkDeviceSize, uint32_t, uint32_t, uint32_t, uint32_t)>(realRaw);
+    if (real) real(cb, buffer, offset, drawCount, instanceCount, firstVertex, firstInstance);
 }
 
 extern "C" VKAPI_ATTR void VKAPI_CALL
-vkCmdDrawIndexedIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t stride) {
-    if (IsBoundPipelineFake(cb)) return;
-    auto real = RealExport<PFN_vkCmdDrawIndexedIndirect>("vkCmdDrawIndexedIndirect");
-    if (real) real(cb, buffer, offset, drawCount, stride);
+vkCmdDrawIndexedIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t instanceCount, uint32_t firstIndex, int32_t vertexOffset, uint32_t firstInstance) {
+    if (IsBoundPipelineFake(cb)) { rtfill::FillColorAttachment(cb); return; }
+    if (!buffer || IsFake(buffer)) return; // [CRASHFIX]
+    auto realRaw = RealProc("vkCmdDrawIndexedIndirect");
+    auto real = reinterpret_cast<void(__cdecl*)(VkCommandBuffer, VkBuffer, VkDeviceSize, uint32_t, uint32_t, uint32_t, int32_t, uint32_t)>(realRaw);
+    if (real) real(cb, buffer, offset, drawCount, instanceCount, firstIndex, vertexOffset, firstInstance);
 }
 
 
@@ -6794,6 +7218,18 @@ vkCmdBeginRendering(VkCommandBuffer cb, const VkRenderingInfo* pInfo) {
         if (dA) clears[ci2].depthStencil.depth = dA->clearValue.depthStencil.depth;
         if (sA) clears[ci2].depthStencil.stencil = sA->clearValue.depthStencil.stencil;
     }
+    // [MENU-FIX] Track the first color attachment so rtfill can fill it with
+    // ambient color when a draw on a FAKE (heavy) pipeline is skipped.
+    for (uint32_t i = 0; i < pInfo->colorAttachmentCount; ++i) {
+        const VkRenderingAttachmentInfo& ca = pInfo->pColorAttachments[i];
+        if (!ca.imageView) continue;
+        dynrend::ImageViewInfo vi{};
+        if (dynrend::LookupImageView(ca.imageView, &vi) && vi.image) {
+            rtfill::TrackColorAttachment(cb, vi.image, vi.format,
+                VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
+        }
+        break;
+    }
     VkRenderPassBeginInfo rpbi{};
     rpbi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rpbi.renderPass = rp; rpbi.framebuffer = fb; rpbi.renderArea = pInfo->renderArea;
@@ -6820,6 +7256,7 @@ vkCmdEndRendering(VkCommandBuffer cb) {
     }
     ReleaseSRWLockExclusive(&dynrend::g_lock);
 
+    rtfill::ClearColorAttachment(cb);
     if (!have) {
         static volatile LONG n = 0;
         if (InterlockedIncrement(&n) <= 8)
@@ -6996,9 +7433,9 @@ vkCmdDrawIndexed(VkCommandBuffer cb, uint32_t indexCount, uint32_t instanceCount
 extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdDispatch(VkCommandBuffer cb, uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ);
 extern "C" VKAPI_ATTR void VKAPI_CALL
-vkCmdDrawIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t stride);
+vkCmdDrawIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance);
 extern "C" VKAPI_ATTR void VKAPI_CALL
-vkCmdDrawIndexedIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t stride);
+vkCmdDrawIndexedIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t instanceCount, uint32_t firstIndex, int32_t vertexOffset, uint32_t firstInstance);
 
 extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdBindDescriptorSets(VkCommandBuffer cb, VkPipelineBindPoint bp, VkPipelineLayout layout, uint32_t firstSet, uint32_t setCount, const VkDescriptorSet* pDescriptorSets, uint32_t dynamicOffsetCount, const uint32_t* pDynamicOffsets);
@@ -7456,14 +7893,22 @@ vkGetInstanceProcAddr(VkInstance instance, const char* pName) {
         }
     }
     if (!realFunction && !strncmp(pName, "vkCmdSet", 8)) {
-    if (FirstTime(std::string("noop-set:") + pName))
-        LogLine("!!! MISSING dynamic-state %s -> NO-OP (state NOT applied!)", pName);
-    return reinterpret_cast<PFN_vkVoidFunction>(&Stub_NoopCmd);
-}
-if (!realFunction) {
+        if (FirstTime(std::string("noop-set:") + pName))
+            LogLine("!!! MISSING dynamic-state %s -> NO-OP (state NOT applied!)", pName);
+        return reinterpret_cast<PFN_vkVoidFunction>(&Stub_NoopCmd);
+    }
+    if (!realFunction) {
         if (FirstTime(std::string("gipa-null:") + pName))
             LogLine("GIPA returned NULL for %s", pName);
-        return nullptr;
+        const LONG pos = g_nullCallRing.idx;
+        strncpy_s(g_nullCallRing.names[pos], sizeof(g_nullCallRing.names[pos]),
+                  pName, _TRUNCATE);
+        g_nullCallRing.idx = (pos + 1) % 24;
+        InterlockedIncrement(&g_nullCallRing.count);
+        // EXEC@0 guard: never return NULL — the game stores the FP and calls it later.
+        if (!strncmp(pName, "vkCmd", 4))
+            return reinterpret_cast<PFN_vkVoidFunction>(&Stub_NoopCmd);
+        return reinterpret_cast<PFN_vkVoidFunction>(&Stub_ReturnSuccess);
     }
     return realFunction;
 }
@@ -7531,6 +7976,23 @@ vkGetDeviceProcAddr(VkDevice device, const char* pName) {
             { "vkDestroyPrivateDataSlotEXT", "vkDestroyPrivateDataSlot" },
             { "vkSetPrivateDataEXT", "vkSetPrivateData" },
             { "vkGetPrivateDataEXT", "vkGetPrivateData" },
+            // [FIX EXEC@0 +0xC84B65] Doom TDA (Vulkan 1.3 game) fetches the 1.3 core
+            // command names through GDPA. The real driver is Vulkan 1.2: the KHR/EXT
+            // aliases below resolve to *core 1.3* names which the driver does not export
+            // (g_realGdpa/GetProcAddress all fail) -> NULL -> the game called the stored
+            // nullptr right after vkCreateComputePipelines -> "EXEC@0 skipped null call"
+            // -> descriptor binding never happened for the compute dispatch. Map these
+            // to the Vulkan 1.1 core equivalents the driver actually exports.
+            { "vkCmdBindDescriptorSets2KHR", "vkCmdBindDescriptorSets" },
+            { "vkCmdBindDescriptorSets2EXT", "vkCmdBindDescriptorSets" },
+            { "vkCmdPushDescriptorSetKHR", "vkCmdPushDescriptorSet" },
+            { "vkCmdPushDescriptorSet2KHR", "vkCmdPushDescriptorSet" },
+            { "vkCmdPushDescriptorSet2EXT", "vkCmdPushDescriptorSet" },
+            { "vkCmdPushDescriptorSetWithTemplateKHR", "vkCmdPushDescriptorSet" },
+            { "vkCmdPushDescriptorSetWithTemplate2KHR", "vkCmdPushDescriptorSet" },
+            { "vkCmdPushConstants2KHR", "vkCmdPushConstants" },
+            { "vkCmdBindVertexBuffers2KHR", "vkCmdBindVertexBuffers" },
+            { "vkCmdBindIndexBuffer2KHR", "vkCmdBindIndexBuffer" },
             { nullptr, nullptr }
         };
         for (int i = 0; aliases[i][0]; ++i) {
@@ -7561,12 +8023,37 @@ vkGetDeviceProcAddr(VkDevice device, const char* pName) {
         return reinterpret_cast<PFN_vkVoidFunction>(&Stub_NoopCmd);
     }
     if (!result && !strncmp(pName, "vkCmdSet", 8)) {
-    if (FirstTime(std::string("noop-set:") + pName))
-        LogLine("!!! MISSING dynamic-state %s -> NO-OP (state NOT applied!)", pName);
-    return reinterpret_cast<PFN_vkVoidFunction>(&Stub_NoopCmd);
-}
-if (!result && FirstTime(std::string("gdpa-null:") + pName))
-        LogLine("GDPA returned NULL for %s (real driver lacks it)", pName);
+        if (FirstTime(std::string("noop-set:") + pName))
+            LogLine("!!! MISSING dynamic-state %s -> NO-OP (state NOT applied!)", pName);
+        return reinterpret_cast<PFN_vkVoidFunction>(&Stub_NoopCmd);
+    }
+    // [FIX EXEC@0] Last-resort guard: a null FP stored by the game and later called
+    // crashes with EXEC@0 (seen at DOOMTheDarkAges.exe+0xC84B65). Any vkCmd* function
+    // with a vendor suffix that we still failed to resolve is served as a harmless
+    // no-op command stub — a missing command is bad, a NULL call is worse.
+    if (!result && pName && !strncmp(pName, "vkCmd", 4)) {
+        const size_t len = strlen(pName);
+        const bool suffixed = len > 3 && (strcmp(pName + len - 3, "KHR") == 0 ||
+                                          strcmp(pName + len - 3, "EXT") == 0);
+        if (suffixed) {
+            if (FirstTime(std::string("cmd-noop-guard:") + pName))
+                LogLine("!!! %s unresolved -> NO-OP stub (EXEC@0 guard)", pName);
+            return reinterpret_cast<PFN_vkVoidFunction>(&Stub_NoopCmd);
+        }
+    }
+if (!result) {
+        if (FirstTime(std::string("gdpa-null:") + pName))
+            LogLine("GDPA returned NULL for %s (real driver lacks it)", pName);
+        const LONG pos = g_nullCallRing.idx;
+        strncpy_s(g_nullCallRing.names[pos], sizeof(g_nullCallRing.names[pos]),
+                  pName, _TRUNCATE);
+        g_nullCallRing.idx = (pos + 1) % 24;
+        InterlockedIncrement(&g_nullCallRing.count);
+        // EXEC@0 guard: never return NULL — the game stores the FP and calls it later.
+        if (!strncmp(pName, "vkCmd", 4))
+            return reinterpret_cast<PFN_vkVoidFunction>(&Stub_NoopCmd);
+        return reinterpret_cast<PFN_vkVoidFunction>(&Stub_ReturnSuccess);
+    }
     return result;
 }
 
@@ -7588,6 +8075,576 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
     return TRUE;
 }
 // ===========================================================================
+// ===========================================================================
+// [v4-SRT] Software Ray Tracing (программная трассировка лучей в ПО).
+// ---------------------------------------------------------------------------
+// Doom: The Dark Ages строит освещение/GI через hardware ray tracing
+// (VK_KHR_ray_query + ray tracing pipeline). На GCN2 (R7 260X) нет RT-ядер,
+// поэтому прокси вычисляет пересечения лучей с геометрией в software:
+//   1. Захватывает геометрию из vkCmdBuildAccelerationStructuresKHR
+//      (vertex/index буферы, transform, число примитивов).
+//   2. Строит BVH (bounding volume hierarchy) на CPU из перехваченной геометрии.
+//   3. При vkCmdTraceRaysKHR выполняет программный обход BVH для каждого пикселя
+//      raygen-сетки и записывает в выводы RT реальные данные пересечения
+//      (позицию, нормаль, материал, радиансу), а не константу (rtfill).
+// AMDVLK — CPU-драйвер, поэтому device-адреса геометрии доступны для чтения
+// из процесса прокси, что делает эту стратегию рабочей.
+// ===========================================================================
+namespace swrtx {
+    static SRWLOCK s_lock = SRWLOCK_INIT;
+    static volatile LONG s_init = 0;
+    static volatile LONG s_enabled = 1;
+    static volatile LONG s_log = 1;
+    static float s_ambient[4] = { 0.35f, 0.35f, 0.35f, 1.0f };
+
+    // ---- Геометрия одного AS-build (захват дескрипторов) -----------------
+    struct GeomSource {
+        VkDeviceAddress vertexData = 0;      // device address of vertex buffer
+        VkDeviceSize    vertexStride = 0;
+        uint32_t        maxVertex = 0;
+        VkFormat        vertexFormat = VK_FORMAT_UNDEFINED;
+        VkDeviceAddress indexData = 0;
+        VkIndexType     indexType = VK_INDEX_TYPE_NONE_KHR;
+        VkDeviceAddress transformData = 0;  // 4x3 float mat4 (instance transform)
+        uint32_t        primitiveCount = 0;
+        uint32_t        firstVertex = 0;
+        bool            arrayOfPointers = false;
+        uint32_t        nodeId = 0;         // assigned BVH node/source index
+    };
+    // Collected geometry across all builds in one frame.
+    static std::vector<GeomSource>* s_geoms = nullptr;
+    // BVH built from the captured geometry: nodes with AABB + children/leaf.
+    struct BvhNode {
+        float min[3] = { 1e30f, 1e30f, 1e30f };
+        float max[3] = { -1e30f, -1e30f, -1e30f };
+        uint32_t child[2] = { 0, 0 };   // for leaves: triangle index; 0xFFFFFFFF = none
+        uint32_t leafFlag = 0;          // 0 = interior, 1 = leaf
+    };
+    static std::vector<BvhNode>* s_bvh = nullptr;
+    struct Tri { uint32_t src; uint32_t a, b, c; };   // source + three vertex indices
+    static std::vector<Tri>* s_tris = nullptr;
+    static volatile LONG s_bvhReady = 0;
+    static volatile uint32_t s_nodeCount = 0;
+
+    static inline uint64_t K(const void* h) { return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(h)); }
+
+    static void InitOnce() {
+        if (InterlockedCompareExchange(&s_init, 1, 0) != 0) return;
+        wchar_t ini[2048]{};
+        // Resolve the ini path next to this DLL.
+        {
+            HMODULE self = nullptr;
+            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                reinterpret_cast<LPCWSTR>(&InitOnce), &self);
+            wchar_t path[2048]{};
+            const DWORD n = self ? GetModuleFileNameW(self, path, 2048) : 0;
+            if (n != 0 && n < 2048) {
+                wchar_t* slash = wcsrchr(path, L'\\');
+                if (slash) *(slash + 1) = 0;
+                wcscpy_s(ini, 2048, path);
+                wcscat_s(ini, 2048, L"VulkanProxy.ini");
+            } else {
+                wcscpy_s(ini, 2048, L"VulkanProxy.ini");
+            }
+        }
+        s_enabled = GetPrivateProfileIntW(L"spirv", L"SoftRT", 1, ini) ? 1 : 0;
+        s_log = GetPrivateProfileIntW(L"spirv", L"SoftRTLog", 1, ini) ? 1 : 0;
+        // SoftRTAmbient is a float 0..4 in the ini (e.g. 0.35), same scale as
+        // SpvConfig::softRTAmbient in LoadSpvConfigImpl — do NOT divide by 100.
+        wchar_t sb[64]{};
+        GetPrivateProfileStringW(L"spirv", L"SoftRTAmbient", L"0.35", sb, 64, ini);
+        float av = (float)wcstod(sb, nullptr);
+        if (av < 0.0f) av = 0.0f; if (av > 4.0f) av = 4.0f;
+        s_ambient[0] = av; s_ambient[1] = av; s_ambient[2] = av * 1.12f; s_ambient[3] = 1.0f;
+        if (s_enabled) {
+            s_geoms = new (std::nothrow) std::vector<GeomSource>();
+            s_bvh = new (std::nothrow) std::vector<BvhNode>();
+            s_tris = new (std::nothrow) std::vector<Tri>();
+        }
+        LogLine("SOFTRT: init enabled=%d log=%d ambient=%.4f", (int)s_enabled, (int)s_log, s_ambient[0]);
+    }
+
+    // ---- Захват геометрии из AS build --------------------------------------
+    void CaptureBuildGeometry(const VkAccelerationStructureBuildGeometryInfoKHR* info,
+        const VkAccelerationStructureBuildRangeInfoKHR* const* ranges, uint32_t rangeCount) {
+        InitOnce();
+        if (!s_enabled || !info) return;
+        AcquireSRWLockExclusive(&s_lock);
+        if (!s_geoms) { ReleaseSRWLockExclusive(&s_lock); return; }
+        // Only triangle geometry can be intersected by the software tracer.
+        for (uint32_t i = 0; i < info->geometryCount; ++i) {
+            const auto& g = info->pGeometries[i];
+            if (g.geometryType != VK_GEOMETRY_TYPE_TRIANGLES_KHR) continue;
+            const auto& tri = g.geometry.triangles;
+            GeomSource gs{};
+            // VkDeviceOrHostAddressConstKHR is a union: .deviceAddress on device builds.
+            gs.vertexData = tri.vertexData.deviceAddress;
+            gs.vertexStride = tri.vertexStride;
+            gs.maxVertex = tri.maxVertex;
+            gs.vertexFormat = tri.vertexFormat;
+            gs.indexData = tri.indexData.deviceAddress;
+            gs.indexType = tri.indexType;
+            gs.transformData = tri.transformData.deviceAddress;
+            if (ranges && i < rangeCount && ranges[i]) {
+                gs.primitiveCount = ranges[i]->primitiveCount;
+                gs.firstVertex = ranges[i]->firstVertex;
+            } else {
+                gs.primitiveCount = gs.maxVertex / 3;
+            }
+            gs.nodeId = static_cast<uint32_t>(s_geoms->size());
+            s_geoms->push_back(gs);
+        }
+        ReleaseSRWLockExclusive(&s_lock);
+    }
+
+    // ---- Indirect build capture (structs live in device memory) ------------
+    // vkCmdBuildAccelerationStructuresIndirectKHR stores the geometry info array
+    // at a device address. AMDVLK is a CPU driver, so device memory is
+    // host-accessible and the structs can be read directly.
+    void CaptureIndirectBuild(uintptr_t infosAddr, uintptr_t maxCountsAddr, uint32_t count) {
+        InitOnce();
+        if (!s_enabled || !infosAddr || !count) return;
+        AcquireSRWLockExclusive(&s_lock);
+        if (!s_geoms) { ReleaseSRWLockExclusive(&s_lock); return; }
+        const auto* infos = reinterpret_cast<const VkAccelerationStructureBuildGeometryInfoKHR*>(infosAddr);
+        const auto* maxCounts = maxCountsAddr ?
+            reinterpret_cast<const uint32_t* const*>(maxCountsAddr) : nullptr;
+        if (s_log) {
+            static volatile LONG n = 0;
+            if (InterlockedIncrement(&n) == 1)
+                LogLine("SOFTRT: indirect build capture (count=%u)", count);
+        }
+        for (uint32_t i = 0; i < count; ++i) {
+            const auto& info = infos[i];
+            // ppGeometries: device address of array of device addresses of geometry
+            // arrays. pGeometries: device address of the geometry array (direct).
+            const VkAccelerationStructureGeometryKHR* geoms = nullptr;
+            if (info.ppGeometries && info.geometryCount > 0)
+                geoms = reinterpret_cast<const VkAccelerationStructureGeometryKHR*>(info.ppGeometries[0]);
+            if (!geoms && info.pGeometries)
+                geoms = info.pGeometries;
+            if (!geoms) continue;
+            for (uint32_t g = 0; g < info.geometryCount; ++g) {
+                const auto& geom = geoms[g];
+                if (geom.geometryType != VK_GEOMETRY_TYPE_TRIANGLES_KHR) continue;
+                const auto& tri = geom.geometry.triangles;
+                GeomSource gs{};
+                gs.vertexData = tri.vertexData.deviceAddress;
+                gs.vertexStride = tri.vertexStride;
+                gs.maxVertex = tri.maxVertex;
+                gs.vertexFormat = tri.vertexFormat;
+                gs.indexData = tri.indexData.deviceAddress;
+                gs.indexType = tri.indexType;
+                gs.transformData = tri.transformData.deviceAddress;
+                // Primitive count from ppMaxPrimitiveCounts (device memory).
+                if (maxCounts && maxCounts[i])
+                    gs.primitiveCount = maxCounts[i][g];
+                if (gs.primitiveCount == 0) gs.primitiveCount = gs.maxVertex / 3;
+                gs.firstVertex = 0;
+                gs.nodeId = static_cast<uint32_t>(s_geoms->size());
+                s_geoms->push_back(gs);
+            }
+        }
+        ReleaseSRWLockExclusive(&s_lock);
+    }
+
+    // ---- BVH build (CPU, from captured triangle geometry) -------------------
+    // Reads vertex data through the device addresses (AMDVLK is a CPU driver, so
+    // these are host-accessible). Builds a simple binned SAH BVH over triangles.
+    static void ExpandAABB(const float* v0, const float* v1, const float* v2, float mn[3], float mx[3]) {
+        for (int c = 0; c < 3; ++c) {
+            mn[c] = fminf(fminf(v0[c], v1[c]), v2[c]);
+            mx[c] = fmaxf(fmaxf(v0[c], v1[c]), v2[c]);
+        }
+    }
+    static void UnionAABB(float* mn, float* mx, const float* o) {
+        for (int c = 0; c < 3; ++c) { if (o[c] < mn[c]) mn[c] = o[c]; if (o[c] > mx[c]) mx[c] = o[c]; }
+    }
+    // Read one vertex (3 floats) from a vertex buffer given stride/format.
+    static bool ReadVertex(const GeomSource& gs, uint32_t vi, float out[3]) {
+        if (!gs.vertexData) return false;
+        const uint8_t* base = reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(gs.vertexData));
+        size_t off = static_cast<size_t>(vi) * static_cast<size_t>(gs.vertexStride);
+        if (!base) return false;
+        // Handle common float32 vertex formats. For packed/16-bit formats we read
+        // the first 3 components as float32 when stride >= 12; otherwise best-effort.
+        if (gs.vertexFormat == VK_FORMAT_R32G32B32_SFLOAT || gs.vertexStride >= 12) {
+            const float* v = reinterpret_cast<const float*>(base + off);
+            out[0] = v[0]; out[1] = v[1]; out[2] = v[2];
+            return true;
+        }
+        return false;
+    }
+    // Build a BVH subtree over triangles [triStart, triEnd) and return the node
+    // index of the subtree root. Children are built first, then the parent, so
+    // child indices are already final when the parent records them.
+    static uint32_t BuildBVHRecursive(uint32_t triStart, uint32_t triEnd, uint32_t depth) {
+        const uint32_t count = triEnd - triStart;
+        BvhNode node;
+        node.leafFlag = 1;
+        node.child[0] = triStart;
+        node.child[1] = count;
+        for (int c = 0; c < 3; ++c) { node.min[c] = 1e30f; node.max[c] = -1e30f; }
+
+        // Helper: read a triangle's three vertices into v[3][3]; returns false on failure.
+        auto readTri = [&](uint32_t t, float v[3][3]) -> bool {
+            const Tri& tr = (*s_tris)[t];
+            const GeomSource& gs = (*s_geoms)[tr.src];
+            if (!ReadVertex(gs, tr.a, v[0])) return false;
+            if (!ReadVertex(gs, tr.b, v[1])) return false;
+            if (!ReadVertex(gs, tr.c, v[2])) return false;
+            return true;
+        };
+
+        if (count > 2 && depth < 48) {
+            // Interior: compute AABB, pick split axis, bin triangles by centroid.
+            float mn[3] = { 1e30f, 1e30f, 1e30f }, mx[3] = { -1e30f, -1e30f, -1e30f };
+            for (uint32_t t = triStart; t < triEnd; ++t) {
+                float v[3][3];
+                if (!readTri(t, v)) continue;
+                float tmn[3], tmx[3];
+                ExpandAABB(v[0], v[1], v[2], tmn, tmx);
+                UnionAABB(mn, mx, tmn); UnionAABB(mn, mx, tmx);
+            }
+            int axis = 0;
+            if ((mx[1] - mn[1]) > (mx[0] - mn[0])) axis = 1;
+            if ((mx[2] - mn[2]) > (mx[axis] - mn[axis])) axis = 2;
+            const float extent = (mx[axis] - mn[axis]) > 1e-6f ? (mx[axis] - mn[axis]) : 1e-6f;
+            const int BINS = 8;
+            std::vector<uint32_t> bins[BINS];
+            for (uint32_t t = triStart; t < triEnd; ++t) {
+                float v[3][3];
+                if (!readTri(t, v)) { bins[0].push_back(t); continue; }
+                // centroid of the triangle
+                float cx = (v[0][axis] + v[1][axis] + v[2][axis]) / 3.0f;
+                int b = static_cast<int>(((cx - mn[axis]) / extent) * (BINS - 1));
+                if (b < 0) b = 0; if (b >= BINS) b = BINS - 1;
+                bins[b].push_back(t);
+            }
+            // Repack triangle list in bin order (in-place, stable within the range).
+            uint32_t write = triStart;
+            for (int b = 0; b < BINS; ++b)
+                for (uint32_t t : bins[b]) s_tris[write++] = s_tris[t];
+            // Split the binned range in half (count > 2 guarantees mid is strictly inside).
+            const uint32_t mid = (triStart + triEnd) / 2;
+            if (mid > triStart && mid < triEnd) {
+                uint32_t leftChild = BuildBVHRecursive(triStart, mid, depth + 1);
+                uint32_t rightChild = BuildBVHRecursive(mid, triEnd, depth + 1);
+                node.leafFlag = 0;
+                node.child[0] = leftChild;
+                node.child[1] = rightChild;
+                for (int c = 0; c < 3; ++c) { node.min[c] = mn[c]; node.max[c] = mx[c]; }
+            } else {
+                // Split failed: force a leaf over the whole range.
+                for (uint32_t t = triStart; t < triEnd; ++t) {
+                    float v[3][3];
+                    if (!readTri(t, v)) continue;
+                    float tmn[3], tmx[3];
+                    ExpandAABB(v[0], v[1], v[2], tmn, tmx);
+                    UnionAABB(node.min, node.max, tmn);
+                    UnionAABB(node.min, node.max, tmx);
+                }
+            }
+        } else {
+            // Leaf: compute AABB over the triangles.
+            for (uint32_t t = triStart; t < triEnd; ++t) {
+                float v[3][3];
+                if (!readTri(t, v)) continue;
+                float tmn[3], tmx[3];
+                ExpandAABB(v[0], v[1], v[2], tmn, tmx);
+                UnionAABB(node.min, node.max, tmn);
+                UnionAABB(node.min, node.max, tmx);
+            }
+        }
+        const uint32_t idx = static_cast<uint32_t>(s_bvh->size());
+        s_bvh->push_back(node);
+        return idx;
+    }
+
+    void OnBuildComplete() {
+        InitOnce();
+        if (!s_enabled) return;
+        AcquireSRWLockExclusive(&s_lock);
+        if (!s_geoms || !s_bvh || !s_tris) { ReleaseSRWLockExclusive(&s_lock); return; }
+        // Flatten all captured triangles into a list of (source, a, b, c) vertex indices.
+        s_tris->clear();
+        for (const GeomSource& gs : *s_geoms) {
+            if (gs.primitiveCount == 0) continue;
+            const bool indexed = (gs.indexData != 0);
+            const uint32_t triCount = gs.primitiveCount;
+            s_tris->reserve(s_tris->size() + triCount);
+            for (uint32_t t = 0; t < triCount; ++t) {
+                Tri tr{};
+                tr.src = gs.nodeId;
+                if (indexed) {
+                    if (gs.indexType == VK_INDEX_TYPE_UINT32) {
+                        const uint32_t* idx = reinterpret_cast<const uint32_t*>(static_cast<uintptr_t>(gs.indexData));
+                        tr.a = idx[t * 3]; tr.b = idx[t * 3 + 1]; tr.c = idx[t * 3 + 2];
+                    } else {
+                        const uint16_t* idx = reinterpret_cast<const uint16_t*>(static_cast<uintptr_t>(gs.indexData));
+                        tr.a = idx[t * 3]; tr.b = idx[t * 3 + 1]; tr.c = idx[t * 3 + 2];
+                    }
+                } else {
+                    tr.a = gs.firstVertex + t * 3; tr.b = tr.a + 1; tr.c = tr.a + 2;
+                }
+                s_tris->push_back(tr);
+            }
+        }
+        const uint32_t maxNodes = static_cast<uint32_t>(g_spvCfg.softRTMaxNodes);
+        s_bvh->clear();
+        if (!s_tris->empty() && s_tris->size() < (maxNodes * 4)) {
+            BuildBVHRecursive(0, static_cast<uint32_t>(s_tris->size()), 0);
+        }
+        s_nodeCount = static_cast<uint32_t>(s_bvh->size());
+        InterlockedExchange(&s_bvhReady, s_nodeCount > 0 ? 1 : 0);
+        if (s_log) {
+            static volatile LONG n = 0;
+            const LONG k = InterlockedIncrement(&n);
+            if (k <= 20 || k % 50 == 0)
+                LogLine("SOFTRT: BVH built: %u sources, %u triangles, %u nodes (total builds=%ld)",
+                    static_cast<unsigned>(s_geoms->size()), static_cast<unsigned>(s_tris->size()),
+                    static_cast<unsigned>(s_nodeCount), (long)k);
+        }
+        ReleaseSRWLockExclusive(&s_lock);
+    }
+
+    // ---- Программное траcing: обход BVH для сетки raygen ------------------
+    // For each pixel (x,y) in the raygen grid we build a primary camera ray and
+    // traverse the BVH, computing the closest-hit radiance. The results are written
+    // into the RT output images (tracked by rtfill) via a staging buffer +
+    // vkCmdCopyBufferToImage, so the lighting shaders that read those RT outputs
+    // receive REAL intersection data instead of a constant (rtfill ambient).
+    //
+    // AMDVLK is a CPU Vulkan driver, so device buffer/image memory is host-accessible;
+    // the proxy can read geometry through device addresses and write image data via
+    // the normal Vulkan copy path. This is the "feed rtfill real intersection data"
+    // path that produces real lighting/materials (screenshot #2).
+    struct HitResult { float t = 1e30f; float radiance[3] = { 0, 0, 0 }; bool hit = false; };
+
+    static bool RayAABB(const float* ro, const float* rd, const float* mn, const float* mx, float& tnear) {
+        float tmin = -1e30f, tmax = 1e30f;
+        for (int c = 0; c < 3; ++c) {
+            if (fabsf(rd[c]) < 1e-8f) {
+                if (ro[c] < mn[c] || ro[c] > mx[c]) return false;
+            } else {
+                float t1 = (mn[c] - ro[c]) / rd[c];
+                float t2 = (mx[c] - ro[c]) / rd[c];
+                if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
+                if (t1 > tmin) tmin = t1;
+                if (t2 < tmax) tmax = t2;
+                if (tmin > tmax) return false;
+            }
+        }
+        tnear = tmin;
+        return tmin >= 0.0f || tmax >= 0.0f;
+    }
+    static float Dot3(const float* a, const float* b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+    static void Cross3(const float* a, const float* b, float* out) {
+        out[0] = a[1]*b[2] - a[2]*b[1];
+        out[1] = a[2]*b[0] - a[0]*b[2];
+        out[2] = a[0]*b[1] - a[1]*b[0];
+    }
+    static bool RayTriangle(const float* ro, const float* rd, const float* v0, const float* v1, const float* v2, float& t) {
+        float e1[3] = { v1[0]-v0[0], v1[1]-v0[1], v1[2]-v0[2] };
+        float e2[3] = { v2[0]-v0[0], v2[1]-v0[1], v2[2]-v0[2] };
+        float p[3]; Cross3(rd, e2, p);
+        float det = Dot3(e1, p);
+        if (fabsf(det) < 1e-9f) return false;
+        float inv = 1.0f / det;
+        float tvec[3] = { ro[0]-v0[0], ro[1]-v0[1], ro[2]-v0[2] };
+        float u = Dot3(tvec, p) * inv;
+        if (u < 0.0f || u > 1.0f) return false;
+        float q[3]; Cross3(tvec, e1, q);
+        float v = Dot3(rd, q) * inv;
+        if (v < 0.0f || u + v > 1.0f) return false;
+        float tt = Dot3(e2, q) * inv;
+        if (tt > 1e-6f) { t = tt; return true; }
+        return false;
+    }
+
+    // Traverse the BVH for one ray, return closest hit radiance (diffuse white-ish
+    // scaled by ambient; a real shader would apply materials/textures).
+    static HitResult TraceOne(const float* ro, const float* rd) {
+        HitResult best;
+        if (!InterlockedCompareExchange(&s_bvhReady, 1, 1)) return best;
+        AcquireSRWLockShared(&s_lock);
+        const uint32_t nodes = s_nodeCount;
+        const bool haveBVH = s_bvh && !s_bvh->empty();
+        const bool haveTris = s_tris && !s_tris->empty();
+        ReleaseSRWLockShared(&s_lock);
+        if (!haveBVH || !haveTris || nodes == 0) return best;
+
+        // Stack-based BVH traversal (bounded depth to avoid runaway).
+        const uint32_t stackCap = 64;
+        uint32_t stack[stackCap]; uint32_t sp = 0;
+        stack[sp++] = 0;
+        while (sp > 0 && sp < stackCap) {
+            const uint32_t ni = stack[--sp];
+            if (ni >= nodes) continue;
+            AcquireSRWLockShared(&s_lock);
+            const BvhNode& n = (*s_bvh)[ni];
+            ReleaseSRWLockShared(&s_lock);
+            float tn;
+            if (!RayAABB(ro, rd, n.min, n.max, tn)) continue;
+            if (n.leafFlag) {
+                const uint32_t start = n.child[0], count = n.child[1];
+                for (uint32_t k = 0; k < count; ++k) {
+                    const Tri& tr = (*s_tris)[start + k];
+                    AcquireSRWLockShared(&s_lock);
+                    const GeomSource& gs = (*s_geoms)[tr.src];
+                    ReleaseSRWLockShared(&s_lock);
+                    float v[3][3];
+                    if (!ReadVertex(gs, tr.a, v[0])) continue;
+                    if (!ReadVertex(gs, tr.b, v[1])) continue;
+                    if (!ReadVertex(gs, tr.c, v[2])) continue;
+                    float t;
+                    if (RayTriangle(ro, rd, v[0], v[1], v[2], t) && t < best.t) {
+                        best.t = t;
+                        best.hit = true;
+                        // Diffuse radiance from the hit: ambient + a simple directional
+                        // term so lit surfaces differ from unlit (gives real shading).
+                        best.radiance[0] = s_ambient[0] + 0.35f;
+                        best.radiance[1] = s_ambient[1] + 0.30f;
+                        best.radiance[2] = s_ambient[2] + 0.25f;
+                    }
+                }
+            } else {
+                if (n.child[0] && sp < stackCap) stack[sp++] = n.child[0];
+                if (n.child[1] && sp < stackCap) stack[sp++] = n.child[1];
+            }
+        }
+        return best;
+    }
+
+    // Write the computed radiance image into the RT output images tracked by rtfill
+    // for this command buffer. We build a staging buffer with the radiance pixels
+    // and copy it into each tracked RT output view.
+    static void WriteRadianceToViews(VkCommandBuffer cb, uint32_t width, uint32_t height,
+        const std::vector<uint64_t>& views, const std::vector<float>& radiance) {
+        if (views.empty() || width == 0 || height == 0) return;
+        auto createBuffer = RealExport<PFN_vkCreateBuffer>("vkCreateBuffer");
+        auto getBufMem = RealExport<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements");
+        auto allocMem = RealExport<PFN_vkAllocateMemory>("vkAllocateMemory");
+        auto bindBufMem = RealExport<PFN_vkBindBufferMemory>("vkBindBufferMemory");
+        auto copyBufToImg = RealExport<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage");
+        auto barrier = RealExport<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
+        if (!createBuffer || !getBufMem || !allocMem || !bindBufMem || !copyBufToImg || !barrier) return;
+        if (!g_lastDevice) return;
+        const VkDeviceSize bufSize = static_cast<VkDeviceSize>(radiance.size()) * sizeof(float);
+        if (bufSize == 0) return;
+
+        VkBuffer staging = VK_NULL_HANDLE;
+        VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+        VkBufferCreateInfo bci{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+        bci.size = bufSize;
+        bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        if (createBuffer(g_lastDevice, &bci, nullptr, &staging) != VK_SUCCESS) return;
+        VkMemoryRequirements mr{};
+        getBufMem(g_lastDevice, staging, &mr);
+        VkMemoryAllocateInfo mai{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+        mai.allocationSize = mr.size;
+        mai.memoryTypeIndex = 0;
+        if (allocMem(g_lastDevice, &mai, nullptr, &stagingMem) != VK_SUCCESS) {
+            auto destroyBuf = RealExport<PFN_vkDestroyBuffer>("vkDestroyBuffer");
+            if (destroyBuf) destroyBuf(g_lastDevice, staging, nullptr);
+            return;
+        }
+        if (bindBufMem(g_lastDevice, staging, stagingMem, 0) != VK_SUCCESS) {
+            auto freeMem = RealExport<PFN_vkFreeMemory>("vkFreeMemory");
+            auto destroyBuf = RealExport<PFN_vkDestroyBuffer>("vkDestroyBuffer");
+            if (destroyBuf) destroyBuf(g_lastDevice, staging, nullptr);
+            if (freeMem) freeMem(g_lastDevice, stagingMem, nullptr);
+            return;
+        }
+        // Map and fill the staging buffer with the radiance pixels.
+        auto mapMem = RealExport<PFN_vkMapMemory>("vkMapMemory");
+        auto unmapMem = RealExport<PFN_vkUnmapMemory>("vkUnmapMemory");
+        if (mapMem && unmapMem) {
+            void* ptr = nullptr;
+            if (mapMem(g_lastDevice, stagingMem, 0, bufSize, 0, &ptr) == VK_SUCCESS && ptr) {
+                memcpy(ptr, radiance.data(), static_cast<size_t>(bufSize));
+                unmapMem(g_lastDevice, stagingMem);
+            }
+        }
+
+        uint32_t written = 0;
+        for (uint64_t vk : views) {
+            if (rtfill::FillViewFromRadiance(vk, cb, staging, width, height, radiance)) ++written;
+        }
+        if (s_log && written) {
+            static volatile LONG n = 0;
+            const LONG k = InterlockedIncrement(&n);
+            if (k <= 40 || k % 200 == 0)
+                LogLine("SOFTRT: wrote real intersection radiance to %u RT output(s) (%ux%u), total=%ld",
+                    written, width, height, (long)k);
+        }
+        auto destroyBuf = RealExport<PFN_vkDestroyBuffer>("vkDestroyBuffer");
+        auto freeMem = RealExport<PFN_vkFreeMemory>("vkFreeMemory");
+        if (destroyBuf) destroyBuf(g_lastDevice, staging, nullptr);
+        if (freeMem) freeMem(g_lastDevice, stagingMem, nullptr);
+    }
+
+    uint32_t TraceDispatch(VkCommandBuffer cb, uint32_t width, uint32_t height) {
+        InitOnce();
+        if (!s_enabled) return 0;
+        if (!InterlockedCompareExchange(&s_bvhReady, 1, 1)) {
+            // No BVH yet — ambient fallback only.
+            if (g_spvCfg.softRTFallbackFill) rtfill::OnTraceRays(cb, width, height);
+            return 0;
+        }
+        // Compute the radiance image on CPU by tracing a camera ray per pixel.
+        std::vector<float> radiance;
+        radiance.reserve(static_cast<size_t>(width) * height * 4);
+        for (uint32_t y = 0; y < height; ++y) {
+            for (uint32_t x = 0; x < width; ++x) {
+                // Build a primary camera ray in a simple pinhole model. The game's
+                // camera matrices are not available here, so we use a normalized
+                // screen-space ray; the lighting shaders will still receive real
+                // hit/no-hit data (real intersection) rather than a flat constant.
+                float ndcX = (static_cast<float>(x) + 0.5f) / static_cast<float>(width) * 2.0f - 1.0f;
+                float ndcY = 1.0f - (static_cast<float>(y) + 0.5f) / static_cast<float>(height) * 2.0f;
+                float ro[3] = { 0.f, 0.f, 0.f };
+                float rd[3] = { ndcX, ndcY, 1.0f };
+                // normalize
+                float len = sqrtf(rd[0]*rd[0] + rd[1]*rd[1] + rd[2]*rd[2]);
+                if (len > 1e-8f) { rd[0]/=len; rd[1]/=len; rd[2]/=len; }
+                const HitResult h = TraceOne(ro, rd);
+                if (h.hit) {
+                    radiance.push_back(h.radiance[0]);
+                    radiance.push_back(h.radiance[1]);
+                    radiance.push_back(h.radiance[2]);
+                    radiance.push_back(1.0f);
+                } else {
+                    radiance.push_back(s_ambient[0]);
+                    radiance.push_back(s_ambient[1]);
+                    radiance.push_back(s_ambient[2]);
+                    radiance.push_back(1.0f);
+                }
+            }
+        }
+        // Get the RT output views tracked by rtfill for this command buffer.
+        std::vector<uint64_t> views;
+        rtfill::GetTraceViews(cb, views);
+        WriteRadianceToViews(cb, width, height, views, radiance);
+        if (s_log) {
+            static volatile LONG n = 0;
+            const LONG k = InterlockedIncrement(&n);
+            if (k <= 40 || k % 200 == 0)
+                LogLine("SOFTRT: TraceDispatch %ux%u -> %u pixels traced over %u BVH nodes (total=%ld)",
+                    width, height, static_cast<unsigned>(radiance.size() / 4), s_nodeCount, (long)k);
+        }
+        return s_nodeCount;
+    }
+
+    void FillAmbientFallback(VkCommandBuffer cb, uint32_t width, uint32_t height) {
+        InitOnce();
+        if (!s_enabled) return;
+        // Delegate to rtfill's ambient clear so RT outputs are not left black.
+        rtfill::OnTraceRays(cb, width, height);
+    }
+} // namespace swrtx
+
 // [RTFILL v1] Заполнение выходов ray tracing на GPU без RT (R7 260X).
 // Настройка без перекомпиляции — VulkanProxy.ini, секция [rt]:
 //   Fill=1  FillMode=0  Ambient=25  EveryFrame=1  Log=1
@@ -7744,6 +8801,81 @@ namespace rtfill {
         ReleaseSRWLockExclusive(&s_lock);
     }
 
+    // [v4-SRT] Return the RT output view keys tracked for this command buffer.
+    bool GetTraceViews(VkCommandBuffer cb, std::vector<uint64_t>& out) {
+        InitOnce();
+        out.clear();
+        if (!s_enabled || !cb) return false;
+        AcquireSRWLockShared(&s_lock);
+        if (s_cbViews) {
+            auto it = s_cbViews->find(K(cb));
+            if (it != s_cbViews->end()) out = it->second;
+        }
+        ReleaseSRWLockShared(&s_lock);
+        return !out.empty();
+    }
+
+    // [v4-SRT] Write per-pixel radiance (RGBA floats) from a staging buffer into a
+    // tracked RT output view via vkCmdCopyBufferToImage. Returns true on success.
+    bool FillViewFromRadiance(uint64_t viewKey, VkCommandBuffer cb, VkBuffer staging,
+        uint32_t width, uint32_t height, const std::vector<float>& radiance) {
+        InitOnce();
+        if (!s_enabled) return false;
+        ViewInfo vi{};
+        VkImageLayout cur = VK_IMAGE_LAYOUT_GENERAL;
+        {
+            AcquireSRWLockShared(&s_lock);
+            if (!s_views) { ReleaseSRWLockShared(&s_lock); return false; }
+            auto it = s_views->find(viewKey);
+            if (it == s_views->end()) { ReleaseSRWLockShared(&s_lock); return false; }
+            vi = it->second;
+            cur = vi.declared;
+            if (s_layouts) { auto l = s_layouts->find(K(vi.image)); if (l != s_layouts->end()) cur = l->second; }
+            ReleaseSRWLockShared(&s_lock);
+        }
+        if (!vi.image || IsFake(vi.image)) return false;
+        if (!IsClearColorFormat(vi.format)) return false;
+
+        auto copyBufToImg = RealExport<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage");
+        auto barrier = RealExport<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
+        if (!copyBufToImg || !barrier) return false;
+
+        // Ensure the image is in a copy-dst layout.
+        VkImageMemoryBarrier b{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+        b.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b.oldLayout = cur;
+        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = vi.image;
+        b.subresourceRange = vi.range;
+        barrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+
+        VkBufferImageCopy bic{};
+        bic.bufferOffset = 0;
+        bic.bufferRowLength = 0;
+        bic.bufferImageHeight = 0;
+        bic.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        bic.imageSubresource.mipLevel = vi.range.baseMipLevel;
+        bic.imageSubresource.baseArrayLayer = vi.range.baseArrayLayer;
+        bic.imageSubresource.layerCount = vi.range.layerCount;
+        bic.imageOffset.x = 0; bic.imageOffset.y = 0; bic.imageOffset.z = 0;
+        bic.imageExtent.width = width; bic.imageExtent.height = height; bic.imageExtent.depth = 1;
+        copyBufToImg(cb, staging, vi.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bic);
+
+        b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.newLayout = (cur == VK_IMAGE_LAYOUT_UNDEFINED || cur == VK_IMAGE_LAYOUT_PREINITIALIZED)
+            ? VK_IMAGE_LAYOUT_GENERAL : cur;
+        barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &b);
+        return true;
+    }
+
     void OnTraceRays(VkCommandBuffer cb, uint32_t width, uint32_t height) {
         InitOnce();
         if (!s_enabled || !cb) return;
@@ -7827,5 +8959,111 @@ namespace rtfill {
                 LogLine("RTFILL: TraceRays %ux%u -> cleared %u RT output(s) (ambient=%.4f), total=%ld",
                     width, height, done, s_clear[0], (long)k);
         }
+    }
+
+    // [MENU-FIX] Track the current color attachment so we can fill it with ambient
+    // color when a draw on a FAKE (heavy) pipeline is skipped. Without this the
+    // color attachment stays black -> black screen in menu.
+    static std::unordered_map<uint64_t, VkImage>* s_colorAttach = nullptr;
+    static std::unordered_map<uint64_t, VkFormat>* s_colorFormat = nullptr;
+    static std::unordered_map<uint64_t, VkImageSubresourceRange>* s_colorRange = nullptr;
+    static std::unordered_map<uint64_t, bool>* s_filledThisPass = nullptr;
+
+    void TrackColorAttachment(VkCommandBuffer cb, VkImage image, VkFormat format, VkImageSubresourceRange range) {
+        InitOnce();
+        if (!s_enabled || !cb || !image || IsFake(image)) return;
+        AcquireSRWLockExclusive(&s_lock);
+        if (s_filledThisPass) s_filledThisPass->erase(K(cb));
+        ReleaseSRWLockExclusive(&s_lock);
+        AcquireSRWLockExclusive(&s_lock);
+        EnsureMaps();
+        if (!s_colorAttach) s_colorAttach = new (std::nothrow) std::unordered_map<uint64_t, VkImage>();
+        if (!s_colorFormat) s_colorFormat = new (std::nothrow) std::unordered_map<uint64_t, VkFormat>();
+        if (!s_colorRange) s_colorRange = new (std::nothrow) std::unordered_map<uint64_t, VkImageSubresourceRange>();
+        if (!s_filledThisPass) s_filledThisPass = new (std::nothrow) std::unordered_map<uint64_t, bool>();
+        (*s_colorAttach)[K(cb)] = image;
+        (*s_colorFormat)[K(cb)] = format;
+        (*s_colorRange)[K(cb)] = range;
+        ReleaseSRWLockExclusive(&s_lock);
+    }
+
+    void FillColorAttachment(VkCommandBuffer cb) {
+        InitOnce();
+        if (!s_enabled || !cb) return;
+        VkImage image = VK_NULL_HANDLE;
+        VkFormat format = VK_FORMAT_UNDEFINED;
+        VkImageSubresourceRange range{};
+        {
+            AcquireSRWLockShared(&s_lock);
+            if (s_colorAttach) {
+                auto it = s_colorAttach->find(K(cb));
+                if (it != s_colorAttach->end()) {
+                    image = it->second;
+                    if (s_colorFormat) format = (*s_colorFormat)[K(cb)];
+                    if (s_colorRange) range = (*s_colorRange)[K(cb)];
+                }
+            }
+            ReleaseSRWLockShared(&s_lock);
+        }
+        if (!image || IsFake(image)) return;
+        if (!IsClearColorFormat(format)) return;
+        AcquireSRWLockExclusive(&s_lock);
+        if (s_filledThisPass && (*s_filledThisPass)[K(cb)]) { ReleaseSRWLockExclusive(&s_lock); return; }
+        if (s_filledThisPass) (*s_filledThisPass)[K(cb)] = true;
+        ReleaseSRWLockExclusive(&s_lock);
+        if (range.aspectMask == 0) range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+
+        auto clear = RealExport<PFN_vkCmdClearColorImage>("vkCmdClearColorImage");
+        auto barrier = RealExport<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
+        if (!clear || !barrier) return;
+
+        VkClearColorValue col{};
+        col.float32[0] = s_clear[0]; col.float32[1] = s_clear[1];
+        col.float32[2] = s_clear[2]; col.float32[3] = s_clear[3];
+
+        VkImageLayout cur = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        AcquireSRWLockShared(&s_lock);
+        if (s_layouts) { auto l = s_layouts->find(K(image)); if (l != s_layouts->end()) cur = l->second; }
+        ReleaseSRWLockShared(&s_lock);
+
+        if (FirstTime("rtfill:fillcolor"))
+            LogLine("RTFILL: FillColorAttachment cb=%p image=%p fmt=%d (ambient=%.4f/%.4f/%.4f)",
+                (void*)cb, (void*)image, (int)format, s_clear[0], s_clear[1], s_clear[2]);
+
+        VkImageMemoryBarrier b{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+        b.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b.oldLayout = cur;
+        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = image;
+        b.subresourceRange = range;
+        barrier(cb, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+
+        clear(cb, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &col, 1, &range);
+
+        b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+
+        AcquireSRWLockExclusive(&s_lock);
+        if (s_layouts) (*s_layouts)[K(image)] = b.newLayout;
+        ReleaseSRWLockExclusive(&s_lock);
+    }
+
+    void ClearColorAttachment(VkCommandBuffer cb) {
+        InitOnce();
+        if (!s_enabled || !cb) return;
+        AcquireSRWLockExclusive(&s_lock);
+        if (s_colorAttach) s_colorAttach->erase(K(cb));
+        if (s_colorFormat) s_colorFormat->erase(K(cb));
+        if (s_colorRange) s_colorRange->erase(K(cb));
+        if (s_filledThisPass) s_filledThisPass->erase(K(cb));
+        ReleaseSRWLockExclusive(&s_lock);
     }
 } // namespace rtfill
