@@ -7868,7 +7868,6 @@ namespace swrtx {
         float av = (float)wcstod(sb, nullptr);
         if (av < 0.0f) av = 0.0f; if (av > 4.0f) av = 4.0f;
         s_ambient[0] = av; s_ambient[1] = av; s_ambient[2] = av * 1.12f; s_ambient[3] = 1.0f;
-        (void)amb;
         if (s_enabled) {
             s_geoms = new (std::nothrow) std::vector<GeomSource>();
             s_bvh = new (std::nothrow) std::vector<BvhNode>();
