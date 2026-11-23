@@ -1162,6 +1162,29 @@ vkQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo* pSubmits,
     auto real = RealExport<PFN_vkQueueSubmit>("vkQueueSubmit");
     if (!real) return VK_ERROR_INITIALIZATION_FAILED;
     if (submitCount == 0 || !pSubmits) return real(queue, 0, nullptr, fence);
+    // [CRASHFIX] Filter out submit entries with NULL/FAKE command buffers.
+    // amdvlk64 derefs NULL command buffer at [obj+8] during submit -> AV at 0x8.
+    {
+        std::vector<VkSubmitInfo> safe;
+        safe.reserve(submitCount);
+        for (uint32_t i = 0; i < submitCount; ++i) {
+            if (!pSubmits[i].pCommandBuffers || pSubmits[i].commandBufferCount == 0) continue;
+            bool allBad = true;
+            for (uint32_t j = 0; j < pSubmits[i].commandBufferCount; ++j) {
+                if (pSubmits[i].pCommandBuffers[j] && !IsFake(pSubmits[i].pCommandBuffers[j])) { allBad = false; break; }
+            }
+            if (allBad) continue;
+            safe.push_back(pSubmits[i]);
+        }
+        if (safe.empty()) return VK_SUCCESS;
+        if (safe.size() < submitCount) {
+            static volatile LONG n = 0;
+            if (InterlockedIncrement(&n) <= 20)
+                LogLine("vkQueueSubmit: filtered %u/%u NULL/FAKE submit entries",
+                    (unsigned)(submitCount - safe.size()), submitCount);
+        }
+        return SubmitTimed([&]() { return real(queue, (uint32_t)safe.size(), safe.data(), fence); }, "vkQueueSubmit");
+    }
     return SubmitTimed([&]() { return real(queue, submitCount, pSubmits, fence); }, "vkQueueSubmit");
 }
 
@@ -6784,8 +6807,22 @@ vkCmdDrawIndexedIndirectCount(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize 
 
 extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdBindDescriptorSets(VkCommandBuffer cb, VkPipelineBindPoint bp, VkPipelineLayout layout, uint32_t firstSet, uint32_t setCount, const VkDescriptorSet* pDescriptorSets, uint32_t dynamicOffsetCount, const uint32_t* pDynamicOffsets) {
-    rtfill::TrackBind(cb, firstSet, setCount, pDescriptorSets); // [RTFILL] ДО проверки FAKE
+    rtfill::TrackBind(cb, firstSet, setCount, pDescriptorSets); // [RTFILL] 
     if (bp == VK_PIPELINE_BIND_POINT_COMPUTE ? IsBoundComputeFake(cb) : IsBoundPipelineFake(cb)) return;   // [v3.2] per bind point
+    // [CRASHFIX] Filter out NULL/FAKE descriptor sets - amdvlk64 derefs them during submit.
+    {
+        std::vector<VkDescriptorSet> safe;
+        for (uint32_t i = 0; i < setCount; ++i)
+            if (pDescriptorSets[i] && !IsFake(pDescriptorSets[i])) safe.push_back(pDescriptorSets[i]);
+        if (safe.empty()) return;
+        if (safe.size() < setCount) {
+            static volatile LONG n = 0;
+            if (InterlockedIncrement(&n) <= 10) LogLine("vkCmdBindDescriptorSets: filtered %u NULL/FAKE sets", (unsigned)(setCount - safe.size()));
+        }
+        auto real = RealExport<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets");
+        if (real) real(cb, bp, layout, firstSet, (uint32_t)safe.size(), safe.data(), dynamicOffsetCount, pDynamicOffsets);
+        return;
+    }
     auto real = RealExport<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets");
     if (real) real(cb, bp, layout, firstSet, setCount, pDescriptorSets, dynamicOffsetCount, pDynamicOffsets);
 }
@@ -6800,6 +6837,22 @@ vkCmdPushConstants(VkCommandBuffer cb, VkPipelineLayout layout, VkShaderStageFla
 extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdBindVertexBuffers(VkCommandBuffer cb, uint32_t firstBinding, uint32_t bindingCount, const VkBuffer* pBuffers, const VkDeviceSize* pOffsets) {
     if (IsBoundPipelineFake(cb)) return;
+    // [CRASHFIX] Filter out NULL/FAKE buffers - amdvlk64 derefs them during submit.
+    {
+        std::vector<VkBuffer> safe;
+        std::vector<VkDeviceSize> off;
+        for (uint32_t i = 0; i < bindingCount; ++i) {
+            if (pBuffers[i] && !IsFake(pBuffers[i])) { safe.push_back(pBuffers[i]); off.push_back(pOffsets ? pOffsets[i] : 0); }
+        }
+        if (safe.empty()) return;
+        if (safe.size() < bindingCount) {
+            static volatile LONG n = 0;
+            if (InterlockedIncrement(&n) <= 10) LogLine("vkCmdBindVertexBuffers: filtered %u NULL/FAKE buffers", (unsigned)(bindingCount - safe.size()));
+        }
+        auto real = RealExport<PFN_vkCmdBindVertexBuffers>("vkCmdBindVertexBuffers");
+        if (real) real(cb, firstBinding, (uint32_t)safe.size(), safe.data(), off.data());
+        return;
+    }
     auto real = RealExport<PFN_vkCmdBindVertexBuffers>("vkCmdBindVertexBuffers");
     if (real) real(cb, firstBinding, bindingCount, pBuffers, pOffsets);
 }
@@ -6807,6 +6860,7 @@ vkCmdBindVertexBuffers(VkCommandBuffer cb, uint32_t firstBinding, uint32_t bindi
 extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdBindIndexBuffer(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, VkIndexType indexType) {
     if (IsBoundPipelineFake(cb)) return;
+    if (!buffer || IsFake(buffer)) return; // [CRASHFIX] amdvlk64 derefs NULL/FAKE buffer during submit
     auto real = RealExport<PFN_vkCmdBindIndexBuffer>("vkCmdBindIndexBuffer");
     if (real) real(cb, buffer, offset, indexType);
 }
