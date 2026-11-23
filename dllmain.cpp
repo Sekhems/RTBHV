@@ -81,6 +81,7 @@ namespace rtfill {
 namespace swrtx {
     void CaptureBuildGeometry(const VkAccelerationStructureBuildGeometryInfoKHR* info,
         const VkAccelerationStructureBuildRangeInfoKHR* const* ranges, uint32_t rangeCount);
+    void CaptureIndirectBuild(uintptr_t infosAddr, uintptr_t maxCountsAddr, uint32_t count);
     void OnBuildComplete();
     uint32_t TraceDispatch(VkCommandBuffer cb, uint32_t width, uint32_t height);
     void FillAmbientFallback(VkCommandBuffer cb, uint32_t width, uint32_t height);
@@ -5903,9 +5904,19 @@ vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo* pInfo,
                 swrtx::OnBuildComplete();
             }
         }
-        VKAPI_ATTR void VKAPI_CALL CmdBuildASIndirect(VkCommandBuffer, uint32_t,
-            const VkAccelerationStructureBuildGeometryInfoKHR*, const VkDeviceAddress*, const uint32_t*,
-            const uint32_t* const*) {}
+        VKAPI_ATTR void VKAPI_CALL CmdBuildASIndirect(VkCommandBuffer, uint32_t count,
+            const VkAccelerationStructureBuildGeometryInfoKHR* pInfos, const VkDeviceAddress*,
+            const uint32_t*, const uint32_t* const* ppMaxPrimitiveCounts) {
+            if (g_spvCfg.softRT && g_spvCfg.softRTBuildBVH && pInfos && count) {
+                if (FirstTime(std::string("srt-ind-build")))
+                    LogLine("SOFTRT: vkCmdBuildAccelerationStructuresIndirectKHR count=%u", count);
+                swrtx::CaptureIndirectBuild(
+                    reinterpret_cast<uintptr_t>(pInfos),
+                    reinterpret_cast<uintptr_t>(ppMaxPrimitiveCounts),
+                    count);
+                swrtx::OnBuildComplete();
+            }
+        }
         VKAPI_ATTR VkResult VKAPI_CALL BuildAS(VkDevice, VkDeferredOperationKHR, uint32_t count,
             const VkAccelerationStructureBuildGeometryInfoKHR* infos, const VkAccelerationStructureBuildRangeInfoKHR* const* ranges) {
             if (g_spvCfg.softRT && g_spvCfg.softRTBuildBVH) {
@@ -5948,17 +5959,36 @@ vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo* pInfo,
             const VkStridedDeviceAddressRegionKHR*, const VkStridedDeviceAddressRegionKHR*,
             const VkStridedDeviceAddressRegionKHR*, uint32_t w, uint32_t h, uint32_t) {
             if (g_spvCfg.softRT && g_spvCfg.softRTTrace) {
-                swrtx::TraceDispatch(cb, w, h); // [SRT] программный обход BVH
+                uint32_t traced = swrtx::TraceDispatch(cb, w, h); // [SRT] BVH trace
+                // Only fill ambient when real tracing did not happen (no BVH yet).
+                if (traced == 0) rtfill::OnTraceRays(cb, w, h); // [RTFILL] fill if no BVH
+                return;
             }
-            rtfill::OnTraceRays(cb, w, h); // [RTFILL] заполнение выводов (ambient если без BVH)
+            rtfill::OnTraceRays(cb, w, h); // [RTFILL] fill outputs
         }
         VKAPI_ATTR void VKAPI_CALL CmdTraceRaysIndirect(VkCommandBuffer cb, const VkStridedDeviceAddressRegionKHR*,
             const VkStridedDeviceAddressRegionKHR*, const VkStridedDeviceAddressRegionKHR*,
-            const VkStridedDeviceAddressRegionKHR*, VkDeviceAddress) {
-            rtfill::OnTraceRays(cb, 0, 0); // [RTFILL]
+            const VkStridedDeviceAddressRegionKHR*, VkDeviceAddress addr) {
+            if (g_spvCfg.softRT && g_spvCfg.softRTTrace && addr) {
+                if (FirstTime(std::string("srt-ind-trace")))
+                    LogLine("SOFTRT: vkCmdTraceRaysIndirectKHR addr=0x%llX", (unsigned long long)addr);
+                const auto* cmd = reinterpret_cast<const VkDispatchIndirectCommand*>(addr);
+                uint32_t traced = swrtx::TraceDispatch(cb, cmd->x, cmd->y);
+                if (traced == 0) rtfill::OnTraceRays(cb, cmd->x, cmd->y);
+            } else {
+                rtfill::OnTraceRays(cb, 0, 0); // [RTFILL]
+            }
         }
-        VKAPI_ATTR void VKAPI_CALL CmdTraceRaysIndirect2(VkCommandBuffer cb, VkDeviceAddress) {
-            rtfill::OnTraceRays(cb, 0, 0); // [RTFILL]
+        VKAPI_ATTR void VKAPI_CALL CmdTraceRaysIndirect2(VkCommandBuffer cb, VkDeviceAddress addr) {
+            if (g_spvCfg.softRT && g_spvCfg.softRTTrace && addr) {
+                if (FirstTime(std::string("srt-ind-trace2")))
+                    LogLine("SOFTRT: vkCmdTraceRaysIndirect2KHR addr=0x%llX", (unsigned long long)addr);
+                const auto* cmd = reinterpret_cast<const VkDispatchIndirectCommand*>(addr);
+                uint32_t traced = swrtx::TraceDispatch(cb, cmd->x, cmd->y);
+                if (traced == 0) rtfill::OnTraceRays(cb, cmd->x, cmd->y);
+            } else {
+                rtfill::OnTraceRays(cb, 0, 0); // [RTFILL]
+            }
         }
         VKAPI_ATTR VkResult VKAPI_CALL CreateRTPipelines(VkDevice, VkDeferredOperationKHR, VkPipelineCache,
             uint32_t count, const VkRayTracingPipelineCreateInfoKHR*, const VkAllocationCallbacks*, VkPipeline* p) {
@@ -7688,7 +7718,10 @@ vkGetInstanceProcAddr(VkInstance instance, const char* pName) {
                   pName, _TRUNCATE);
         g_nullCallRing.idx = (pos + 1) % 24;
         InterlockedIncrement(&g_nullCallRing.count);
-        return nullptr;
+        // EXEC@0 guard: never return NULL — the game stores the FP and calls it later.
+        if (!strncmp(pName, "vkCmd", 4))
+            return reinterpret_cast<PFN_vkVoidFunction>(&Stub_NoopCmd);
+        return reinterpret_cast<PFN_vkVoidFunction>(&Stub_ReturnSuccess);
     }
     return realFunction;
 }
@@ -7829,6 +7862,10 @@ if (!result) {
                   pName, _TRUNCATE);
         g_nullCallRing.idx = (pos + 1) % 24;
         InterlockedIncrement(&g_nullCallRing.count);
+        // EXEC@0 guard: never return NULL — the game stores the FP and calls it later.
+        if (!strncmp(pName, "vkCmd", 4))
+            return reinterpret_cast<PFN_vkVoidFunction>(&Stub_NoopCmd);
+        return reinterpret_cast<PFN_vkVoidFunction>(&Stub_ReturnSuccess);
     }
     return result;
 }
@@ -7969,6 +8006,57 @@ namespace swrtx {
             }
             gs.nodeId = static_cast<uint32_t>(s_geoms->size());
             s_geoms->push_back(gs);
+        }
+        ReleaseSRWLockExclusive(&s_lock);
+    }
+
+    // ---- Indirect build capture (structs live in device memory) ------------
+    // vkCmdBuildAccelerationStructuresIndirectKHR stores the geometry info array
+    // at a device address. AMDVLK is a CPU driver, so device memory is
+    // host-accessible and the structs can be read directly.
+    void CaptureIndirectBuild(uintptr_t infosAddr, uintptr_t maxCountsAddr, uint32_t count) {
+        InitOnce();
+        if (!s_enabled || !infosAddr || !count) return;
+        AcquireSRWLockExclusive(&s_lock);
+        if (!s_geoms) { ReleaseSRWLockExclusive(&s_lock); return; }
+        const auto* infos = reinterpret_cast<const VkAccelerationStructureBuildGeometryInfoKHR*>(infosAddr);
+        const auto* maxCounts = maxCountsAddr ?
+            reinterpret_cast<const uint32_t* const*>(maxCountsAddr) : nullptr;
+        if (s_log) {
+            static volatile LONG n = 0;
+            if (InterlockedIncrement(&n) == 1)
+                LogLine("SOFTRT: indirect build capture (count=%u)", count);
+        }
+        for (uint32_t i = 0; i < count; ++i) {
+            const auto& info = infos[i];
+            // ppGeometries: device address of array of device addresses of geometry
+            // arrays. pGeometries: device address of the geometry array (direct).
+            const VkAccelerationStructureGeometryKHR* geoms = nullptr;
+            if (info.ppGeometries && info.geometryCount > 0)
+                geoms = reinterpret_cast<const VkAccelerationStructureGeometryKHR*>(info.ppGeometries[0]);
+            if (!geoms && info.pGeometries)
+                geoms = info.pGeometries;
+            if (!geoms) continue;
+            for (uint32_t g = 0; g < info.geometryCount; ++g) {
+                const auto& geom = geoms[g];
+                if (geom.geometryType != VK_GEOMETRY_TYPE_TRIANGLES_KHR) continue;
+                const auto& tri = geom.geometry.triangles;
+                GeomSource gs{};
+                gs.vertexData = tri.vertexData.deviceAddress;
+                gs.vertexStride = tri.vertexStride;
+                gs.maxVertex = tri.maxVertex;
+                gs.vertexFormat = tri.vertexFormat;
+                gs.indexData = tri.indexData.deviceAddress;
+                gs.indexType = tri.indexType;
+                gs.transformData = tri.transformData.deviceAddress;
+                // Primitive count from ppMaxPrimitiveCounts (device memory).
+                if (maxCounts && maxCounts[i])
+                    gs.primitiveCount = maxCounts[i][g];
+                if (gs.primitiveCount == 0) gs.primitiveCount = gs.maxVertex / 3;
+                gs.firstVertex = 0;
+                gs.nodeId = static_cast<uint32_t>(s_geoms->size());
+                s_geoms->push_back(gs);
+            }
         }
         ReleaseSRWLockExclusive(&s_lock);
     }
