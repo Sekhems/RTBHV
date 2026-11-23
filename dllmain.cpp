@@ -1634,6 +1634,10 @@ namespace {
             const double a = wcstod(sb, nullptr);
             g_spvCfg.softRTAmbient = (a >= 0.0 && a <= 4.0) ? static_cast<float>(a) : 0.35f;
         }
+        if (FirstTime(std::string("srt-cfg-log")))
+            LogLine("SOFTRT: CONFIG softRT=%d buildBVH=%d trace=%d fallback=%d log=%d",
+                g_spvCfg.softRT, g_spvCfg.softRTBuildBVH, g_spvCfg.softRTTrace,
+                g_spvCfg.softRTFallbackFill, g_spvCfg.softRTLog);
         auto rdList = [&](const wchar_t* key, uint32_t* out, int& n) {
             wchar_t buf[256]{};
             GetPrivateProfileStringW(L"spirv", key, L"", buf, 256, path);
@@ -5898,6 +5902,8 @@ vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo* pInfo,
         VKAPI_ATTR void VKAPI_CALL DestroyAS(VkDevice, VkAccelerationStructureKHR, const VkAllocationCallbacks*) {}
         VKAPI_ATTR void VKAPI_CALL CmdBuildAS(VkCommandBuffer, uint32_t count,
             const VkAccelerationStructureBuildGeometryInfoKHR* infos, const VkAccelerationStructureBuildRangeInfoKHR* const* ranges) {
+            if (FirstTime(std::string("srt-diag-build-dir")))
+                LogLine("SOFTRT: DIAG CmdBuildAS called softRT=%d buildBVH=%d", g_spvCfg.softRT, g_spvCfg.softRTBuildBVH);
             if (g_spvCfg.softRT && g_spvCfg.softRTBuildBVH) {
                 for (uint32_t i = 0; i < count; ++i)
                     swrtx::CaptureBuildGeometry(infos + i, ranges ? ranges + i : nullptr, 1);
@@ -5907,6 +5913,9 @@ vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo* pInfo,
         VKAPI_ATTR void VKAPI_CALL CmdBuildASIndirect(VkCommandBuffer, uint32_t count,
             const VkAccelerationStructureBuildGeometryInfoKHR* pInfos, const VkDeviceAddress*,
             const uint32_t*, const uint32_t* const* ppMaxPrimitiveCounts) {
+            if (FirstTime(std::string("srt-diag-build")))
+                LogLine("SOFTRT: DIAG CmdBuildASIndirect called softRT=%d buildBVH=%d count=%u pInfos=%p",
+                    g_spvCfg.softRT, g_spvCfg.softRTBuildBVH, count, (const void*)pInfos);
             if (g_spvCfg.softRT && g_spvCfg.softRTBuildBVH && pInfos && count) {
                 if (FirstTime(std::string("srt-ind-build")))
                     LogLine("SOFTRT: vkCmdBuildAccelerationStructuresIndirectKHR count=%u", count);
@@ -5958,6 +5967,9 @@ vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo* pInfo,
         VKAPI_ATTR void VKAPI_CALL CmdTraceRays(VkCommandBuffer cb, const VkStridedDeviceAddressRegionKHR*,
             const VkStridedDeviceAddressRegionKHR*, const VkStridedDeviceAddressRegionKHR*,
             const VkStridedDeviceAddressRegionKHR*, uint32_t w, uint32_t h, uint32_t) {
+            if (FirstTime(std::string("srt-diag-trace-dir")))
+                LogLine("SOFTRT: DIAG CmdTraceRays called softRT=%d trace=%d w=%u h=%u",
+                    g_spvCfg.softRT, g_spvCfg.softRTTrace, w, h);
             if (g_spvCfg.softRT && g_spvCfg.softRTTrace) {
                 uint32_t traced = swrtx::TraceDispatch(cb, w, h); // [SRT] BVH trace
                 // Only fill ambient when real tracing did not happen (no BVH yet).
@@ -5969,6 +5981,9 @@ vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo* pInfo,
         VKAPI_ATTR void VKAPI_CALL CmdTraceRaysIndirect(VkCommandBuffer cb, const VkStridedDeviceAddressRegionKHR*,
             const VkStridedDeviceAddressRegionKHR*, const VkStridedDeviceAddressRegionKHR*,
             const VkStridedDeviceAddressRegionKHR*, VkDeviceAddress addr) {
+            if (FirstTime(std::string("srt-diag-trace")))
+                LogLine("SOFTRT: DIAG CmdTraceRaysIndirect called softRT=%d trace=%d addr=0x%llX",
+                    g_spvCfg.softRT, g_spvCfg.softRTTrace, (unsigned long long)addr);
             if (g_spvCfg.softRT && g_spvCfg.softRTTrace && addr) {
                 if (FirstTime(std::string("srt-ind-trace")))
                     LogLine("SOFTRT: vkCmdTraceRaysIndirectKHR addr=0x%llX", (unsigned long long)addr);
@@ -5980,6 +5995,9 @@ vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo* pInfo,
             }
         }
         VKAPI_ATTR void VKAPI_CALL CmdTraceRaysIndirect2(VkCommandBuffer cb, VkDeviceAddress addr) {
+            if (FirstTime(std::string("srt-diag-trace2")))
+                LogLine("SOFTRT: DIAG CmdTraceRaysIndirect2 called softRT=%d trace=%d addr=0x%llX",
+                    g_spvCfg.softRT, g_spvCfg.softRTTrace, (unsigned long long)addr);
             if (g_spvCfg.softRT && g_spvCfg.softRTTrace && addr) {
                 if (FirstTime(std::string("srt-ind-trace2")))
                     LogLine("SOFTRT: vkCmdTraceRaysIndirect2KHR addr=0x%llX", (unsigned long long)addr);
