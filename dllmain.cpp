@@ -7676,13 +7676,18 @@ vkGetInstanceProcAddr(VkInstance instance, const char* pName) {
         }
     }
     if (!realFunction && !strncmp(pName, "vkCmdSet", 8)) {
-    if (FirstTime(std::string("noop-set:") + pName))
-        LogLine("!!! MISSING dynamic-state %s -> NO-OP (state NOT applied!)", pName);
-    return reinterpret_cast<PFN_vkVoidFunction>(&Stub_NoopCmd);
-}
-if (!realFunction) {
+        if (FirstTime(std::string("noop-set:") + pName))
+            LogLine("!!! MISSING dynamic-state %s -> NO-OP (state NOT applied!)", pName);
+        return reinterpret_cast<PFN_vkVoidFunction>(&Stub_NoopCmd);
+    }
+    if (!realFunction) {
         if (FirstTime(std::string("gipa-null:") + pName))
             LogLine("GIPA returned NULL for %s", pName);
+        const LONG pos = g_nullCallRing.idx;
+        strncpy_s(g_nullCallRing.names[pos], sizeof(g_nullCallRing.names[pos]),
+                  pName, _TRUNCATE);
+        g_nullCallRing.idx = (pos + 1) % 24;
+        InterlockedIncrement(&g_nullCallRing.count);
         return nullptr;
     }
     return realFunction;
