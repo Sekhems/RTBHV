@@ -1093,7 +1093,7 @@ vkQueueSubmit2KHR(VkQueue queue, uint32_t submitCount, const VkSubmitInfo2* pSub
 // which were NOT wrapped in DriverCallTimed — so the watchdog never fired and the
 // game hung forever. Each is now run on a private worker thread with SubmitTimeoutSec;
 // if it never returns, the call is abandoned (the worker is pinned to one core) and
-// VK_ERROR_TIMEOUT is returned so the game can make progress.
+// VK_TIMEOUT is returned so the game can make progress.
 // ---------------------------------------------------------------------------
 namespace {
     // Runs f on a timed worker using SubmitTimeoutSec, restoring the previous compile
@@ -1101,7 +1101,7 @@ namespace {
     // The result and the callable are held in shared_ptr so the worker thread (which
     // may outlive this frame after a timeout) never touches dangling stack references.
     template<class F> VkResult SubmitTimed(F&& f, const char* job) {
-        auto resP = std::make_shared<VkResult>(VK_ERROR_TIMEOUT);
+        auto resP = std::make_shared<VkResult>(VK_TIMEOUT);
         auto fnHolder = std::make_shared<typename std::decay<F>::type>(std::forward<F>(f));
         auto call = [resP, fnHolder]() { *resP = static_cast<VkResult>((*fnHolder)()); };
 
@@ -1135,12 +1135,12 @@ namespace {
                     LogLine("!!! %s FAILED: result=%d (failures so far=%ld)", job, static_cast<int>(*resP), static_cast<long>(n));
             }
         } else if (timedOut) {
-            LogLine("WATCHDOG: %s TIMED OUT after %d s -> returning VK_ERROR_TIMEOUT (game keeps running)",
+            LogLine("WATCHDOG: %s TIMED OUT after %d s -> returning VK_TIMEOUT (game keeps running)",
                 job, g_spvCfg.submitTimeoutSec);
-            *resP = VK_ERROR_TIMEOUT;
+            *resP = VK_TIMEOUT;
         } else {
-            LogLine("CAUGHT driver crash in %s -> returning VK_ERROR_TIMEOUT", job);
-            *resP = VK_ERROR_TIMEOUT;
+            LogLine("CAUGHT driver crash in %s -> returning VK_TIMEOUT", job);
+            *resP = VK_TIMEOUT;
         }
         return *resP;
     }
