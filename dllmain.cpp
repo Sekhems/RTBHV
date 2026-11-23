@@ -1022,6 +1022,8 @@ VkImageLayout MapLayout2(VkImageLayout l, VkImageAspectFlags aspect) {
 // ---------------------------------------------------------------------------// v4: sync2 implementations (translate to sync1)
 // ---------------------------------------------------------------------------
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkQueueSubmit(VkQueue, uint32_t, const VkSubmitInfo*, VkFence); // forward decl for vkQueueSubmit2
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
 vkQueueSubmit2(VkQueue queue, uint32_t submitCount, const VkSubmitInfo2* pSubmits, VkFence fence) {
     auto real = RealExport<PFN_vkQueueSubmit>("vkQueueSubmit");
     if (!real) return VK_ERROR_INITIALIZATION_FAILED;
@@ -1181,7 +1183,6 @@ vkQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo* pSubmits,
         std::vector<std::vector<VkSemaphore>> safeWaitSem(submitCount), safeSigSem(submitCount);
         uint32_t totalFiltered = 0;
         for (uint32_t i = 0; i < submitCount; ++i) {
-            VkSubmitInfo& s = safe.empty() ? pSubmits[i] : pSubmits[i];
             // Filter command buffers
             std::vector<VkCommandBuffer> cbs;
             if (pSubmits[i].pCommandBuffers && pSubmits[i].commandBufferCount > 0) {
