@@ -5697,9 +5697,9 @@ vkAllocateMemory(VkDevice device, const VkMemoryAllocateInfo* pInfo,
     } else {
         static volatile LONG count = 0;
         if (InterlockedIncrement(&count) <= 30) {
-            LogLine("vkAllocateMemory: size=%llu typeIdx=%u",
-                pInfo ? (unsigned long long)pInfo->allocationSize : 0,
-                pInfo ? pInfo->memoryTypeIndex : 0);
+            LogLine("vkAllocateMemory: device=%p size=%llu typeIdx=%u mem=%p",
+                (void*)device, pInfo ? (unsigned long long)pInfo->allocationSize : 0,
+                pInfo ? pInfo->memoryTypeIndex : 0, (void*)*pMemory);
         }
     }
     return r;
@@ -5761,8 +5761,9 @@ vkCreateBuffer(VkDevice device, const VkBufferCreateInfo* pInfo,
     } else {
         static volatile LONG count = 0;
         if (InterlockedIncrement(&count) <= 30) {
-            LogLine("vkCreateBuffer: size=%llu usage=0x%X",
-                pInfo ? (unsigned long long)pInfo->size : 0, pInfo ? (unsigned)pInfo->usage : 0);
+            LogLine("vkCreateBuffer: device=%p size=%llu usage=0x%X buf=%p",
+                (void*)device, pInfo ? (unsigned long long)pInfo->size : 0,
+                pInfo ? (unsigned)pInfo->usage : 0, (void*)*pBuffer);
         }
     }
     return r;
@@ -5794,8 +5795,8 @@ vkBindBufferMemory(VkDevice device, VkBuffer buffer, VkDeviceMemory memory, VkDe
     }
         VkResult r = VK_ERROR_UNKNOWN;
     if (!DriverCall([&]() { r = real(device, buffer, memory, offset); }, false)) {   // [v3.2] not gated by shader compiles
-        LogLine("CAUGHT driver crash in vkBindBufferMemory buffer=%p memory=%p offset=%llu",
-            (void*)buffer, (void*)memory, (unsigned long long)offset);
+        LogLine("CAUGHT driver crash in vkBindBufferMemory device=%p buffer=%p memory=%p offset=%llu",
+            (void*)device, (void*)buffer, (void*)memory, (unsigned long long)offset);
         return VK_SUCCESS; // keep the game alive - menu is more important than this bind
     }
     if (r != VK_SUCCESS) LogLine("vkBindBufferMemory FAILED: result=%d offset=%llu", (int)r, (unsigned long long)offset);
@@ -6296,6 +6297,137 @@ vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo* pInfo,
             return nullptr;
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// [FIX EXEC@0] Export wrappers for RT KHR functions. The game resolves some
+// function pointers via direct GetProcAddress on this module (not through
+// vkGetInstanceProcAddr). The generated export table does not carry the
+// RT/KHR names, so GetProcAddress returned NULL -> the game cached NULL ->
+// called it -> EXEC@0. These dllexport wrappers ensure the names are always
+// present in the export table and forward to the softRT stubs.
+// ---------------------------------------------------------------------------
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkCreateAccelerationStructureKHR(VkDevice d, const VkAccelerationStructureCreateInfoKHR* ci,
+    const VkAllocationCallbacks* al, VkAccelerationStructureKHR* p) {
+    return stub::CreateAS(d, ci, al, p);
+}
+extern "C" __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+vkDestroyAccelerationStructureKHR(VkDevice d, VkAccelerationStructureKHR as,
+    const VkAllocationCallbacks* al) { stub::DestroyAS(d, as, al); }
+extern "C" __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+vkCmdBuildAccelerationStructuresKHR(VkCommandBuffer cb, uint32_t count,
+    const VkAccelerationStructureBuildGeometryInfoKHR* infos,
+    const VkAccelerationStructureBuildRangeInfoKHR* const* ranges) {
+    stub::CmdBuildAS(cb, count, infos, ranges);
+}
+extern "C" __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+vkCmdBuildAccelerationStructuresIndirectKHR(VkCommandBuffer cb, uint32_t count,
+    const VkAccelerationStructureBuildGeometryInfoKHR* infos, const VkDeviceAddress* addr,
+    const uint32_t* counts, const uint32_t* const* maxCounts) {
+    stub::CmdBuildASIndirect(cb, count, infos, addr, counts, maxCounts);
+}
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkBuildAccelerationStructuresKHR(VkDevice d, VkDeferredOperationKHR op, uint32_t count,
+    const VkAccelerationStructureBuildGeometryInfoKHR* infos,
+    const VkAccelerationStructureBuildRangeInfoKHR* const* ranges) {
+    return stub::BuildAS(d, op, count, infos, ranges);
+}
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkCopyAccelerationStructureKHR(VkDevice d, VkDeferredOperationKHR op,
+    const VkCopyAccelerationStructureInfoKHR* info) { return stub::CopyAS(d, op, info); }
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkCopyAccelerationStructureToMemoryKHR(VkDevice d, VkDeferredOperationKHR op,
+    const VkCopyAccelerationStructureToMemoryInfoKHR* info) { return stub::CopyASToMem(d, op, info); }
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkCopyMemoryToAccelerationStructureKHR(VkDevice d, VkDeferredOperationKHR op,
+    const VkCopyMemoryToAccelerationStructureInfoKHR* info) { return stub::CopyMemToAS(d, op, info); }
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkWriteAccelerationStructuresPropertiesKHR(VkDevice d, uint32_t count,
+    const VkAccelerationStructureKHR* as, VkQueryType qt, size_t dataSize, void* pData,
+    size_t align) { return stub::WriteASProps(d, count, as, qt, dataSize, pData, align); }
+extern "C" __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+vkCmdCopyAccelerationStructureKHR(VkCommandBuffer cb, const VkCopyAccelerationStructureInfoKHR* info) {
+    stub::CmdCopyAS(cb, info);
+}
+extern "C" __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+vkCmdCopyAccelerationStructureToMemoryKHR(VkCommandBuffer cb,
+    const VkCopyAccelerationStructureToMemoryInfoKHR* info) { stub::CmdCopyASToMem(cb, info); }
+extern "C" __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+vkCmdCopyMemoryToAccelerationStructureKHR(VkCommandBuffer cb,
+    const VkCopyMemoryToAccelerationStructureInfoKHR* info) { stub::CmdCopyMemToAS(cb, info); }
+extern "C" __declspec(dllexport) VKAPI_ATTR VkDeviceAddress VKAPI_CALL
+vkGetAccelerationStructureDeviceAddressKHR(VkDevice d,
+    const VkAccelerationStructureDeviceAddressInfoKHR* info) { return stub::GetASAddr(d, info); }
+extern "C" __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+vkCmdWriteAccelerationStructuresPropertiesKHR(VkCommandBuffer cb, uint32_t count,
+    const VkAccelerationStructureKHR* as, VkQueryType qt, VkQueryPool qp, uint32_t index) {
+    stub::CmdWriteASProps(cb, count, as, qt, qp, index);
+}
+extern "C" __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+vkGetDeviceAccelerationStructureCompatibilityKHR(VkDevice d,
+    const VkAccelerationStructureVersionInfoKHR* ver,
+    VkAccelerationStructureCompatibilityKHR* compat) { stub::GetASCompat(d, ver, compat); }
+extern "C" __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+vkGetAccelerationStructureBuildSizesKHR(VkDevice d, VkAccelerationStructureBuildTypeKHR bt,
+    const VkAccelerationStructureBuildGeometryInfoKHR* geo, const uint32_t* maxCounts,
+    VkAccelerationStructureBuildSizesInfoKHR* sizes) { stub::GetASBuildSizes(d, bt, geo, maxCounts, sizes); }
+extern "C" __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+vkCmdTraceRaysKHR(VkCommandBuffer cb, const VkStridedDeviceAddressRegionKHR* raygen,
+    const VkStridedDeviceAddressRegionKHR* miss, const VkStridedDeviceAddressRegionKHR* hit,
+    const VkStridedDeviceAddressRegionKHR* callable, uint32_t w, uint32_t h, uint32_t d) {
+    stub::CmdTraceRays(cb, raygen, miss, hit, callable, w, h, d);
+}
+extern "C" __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+vkCmdTraceRaysIndirectKHR(VkCommandBuffer cb, const VkStridedDeviceAddressRegionKHR* raygen,
+    const VkStridedDeviceAddressRegionKHR* miss, const VkStridedDeviceAddressRegionKHR* hit,
+    const VkStridedDeviceAddressRegionKHR* callable, VkDeviceAddress addr) {
+    stub::CmdTraceRaysIndirect(cb, raygen, miss, hit, callable, addr);
+}
+extern "C" __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+vkCmdTraceRaysIndirect2KHR(VkCommandBuffer cb, VkDeviceAddress addr) {
+    stub::CmdTraceRaysIndirect2(cb, addr);
+}
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkCreateRayTracingPipelinesKHR(VkDevice d, VkDeferredOperationKHR op, VkPipelineCache cache,
+    uint32_t count, const VkRayTracingPipelineCreateInfoKHR* infos,
+    const VkAllocationCallbacks* al, VkPipeline* pipes) {
+    return stub::CreateRTPipelines(d, op, cache, count, infos, al, pipes);
+}
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkGetRayTracingShaderGroupHandlesKHR(VkDevice d, VkPipeline pipe, uint32_t first,
+    uint32_t count, size_t dataSize, void* pData) {
+    return stub::GetRTHandles(d, pipe, first, count, dataSize, pData);
+}
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkGetRayTracingCaptureReplayShaderGroupHandlesKHR(VkDevice d, VkPipeline pipe, uint32_t first,
+    uint32_t count, size_t dataSize, void* pData) {
+    return stub::GetRTHandles(d, pipe, first, count, dataSize, pData);
+}
+extern "C" __declspec(dllexport) VKAPI_ATTR VkDeviceSize VKAPI_CALL
+vkGetRayTracingShaderGroupStackSizeKHR(VkDevice d, VkPipeline pipe, uint32_t group,
+    VkShaderGroupShaderKHR stage) { return stub::GetRTStack(d, pipe, group, stage); }
+extern "C" __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+vkCmdSetRayTracingPipelineStackSizeKHR(VkCommandBuffer cb, uint32_t firstStage) {
+    stub::CmdSetRTStack(cb, firstStage);
+}
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkCreateDeferredOperationKHR(VkDevice d, const VkAllocationCallbacks* al,
+    VkDeferredOperationKHR* p) { return stub::CreateDefOp(d, al, p); }
+extern "C" __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+vkDestroyDeferredOperationKHR(VkDevice d, VkDeferredOperationKHR op,
+    const VkAllocationCallbacks* al) { stub::DestroyDefOp(d, op, al); }
+extern "C" __declspec(dllexport) VKAPI_ATTR uint32_t VKAPI_CALL
+vkGetDeferredOperationMaxConcurrencyKHR(VkDevice d, VkDeferredOperationKHR op) {
+    return stub::DefOpConcurrency(d, op);
+}
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkGetDeferredOperationResultKHR(VkDevice d, VkDeferredOperationKHR op) {
+    return stub::DefOpResult(d, op);
+}
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkDeferredOperationJoinKHR(VkDevice d, VkDeferredOperationKHR op) {
+    return stub::DefOpJoin(d, op);
 }
 
 // ---------------------------------------------------------------------------
