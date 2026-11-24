@@ -76,6 +76,8 @@ namespace rtfill {
     void TrackColorAttachment(VkCommandBuffer cb, VkImage image, VkFormat format, VkImageSubresourceRange range);
     void FillColorAttachment(VkCommandBuffer cb);
     void ClearColorAttachment(VkCommandBuffer cb);
+    void MarkRealDraw(VkCommandBuffer cb);
+    void FillColorAttachmentIfEmpty(VkCommandBuffer cb);
     bool GetTraceViews(VkCommandBuffer cb, std::vector<uint64_t>& out);
     bool FillViewFromRadiance(uint64_t viewKey, VkCommandBuffer cb, VkBuffer staging,
         uint32_t width, uint32_t height, const std::vector<float>& radiance);
@@ -6867,6 +6869,7 @@ vkCmdDraw(VkCommandBuffer cb, uint32_t vertexCount, uint32_t instanceCount, uint
         rtfill::FillColorAttachment(cb);
         return;
     }
+    rtfill::MarkRealDraw(cb);
     auto real = RealExport<PFN_vkCmdDraw>("vkCmdDraw");
     if (real) real(cb, vertexCount, instanceCount, firstVertex, firstInstance);
 }
@@ -6883,6 +6886,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdDrawIndirectCount(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride) {
     if (IsBoundPipelineFake(cb)) return;
     if (!buffer || IsFake(buffer) || !countBuffer || IsFake(countBuffer)) return; // [CRASHFIX]
+    rtfill::MarkRealDraw(cb);
     auto real = RealExport<PFN_vkCmdDrawIndirectCount>("vkCmdDrawIndirectCount");
     if (real) real(cb, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
 }
@@ -6891,6 +6895,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdDrawIndexedIndirectCount(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride) {
     if (IsBoundPipelineFake(cb)) return;
     if (!buffer || IsFake(buffer) || !countBuffer || IsFake(countBuffer)) return; // [CRASHFIX]
+    rtfill::MarkRealDraw(cb);
     auto real = RealExport<PFN_vkCmdDrawIndexedIndirectCount>("vkCmdDrawIndexedIndirectCount");
     if (real) real(cb, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
 }
@@ -6965,6 +6970,7 @@ if (IsBoundPipelineFake(cb)) {
     rtfill::FillColorAttachment(cb);
     return;
 }
+    rtfill::MarkRealDraw(cb);
     auto real = RealExport<PFN_vkCmdDrawIndexed>("vkCmdDrawIndexed");
     if (real) real(cb, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
 }
@@ -6980,6 +6986,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdDrawIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance) {
     if (IsBoundPipelineFake(cb)) { rtfill::FillColorAttachment(cb); return; }
     if (!buffer || IsFake(buffer)) return; // [CRASHFIX]
+    rtfill::MarkRealDraw(cb);
     auto realRaw = RealProc("vkCmdDrawIndirect");
     auto real = reinterpret_cast<void(__cdecl*)(VkCommandBuffer, VkBuffer, VkDeviceSize, uint32_t, uint32_t, uint32_t, uint32_t)>(realRaw);
     if (real) real(cb, buffer, offset, drawCount, instanceCount, firstVertex, firstInstance);
@@ -6989,6 +6996,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL
 vkCmdDrawIndexedIndirect(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t instanceCount, uint32_t firstIndex, int32_t vertexOffset, uint32_t firstInstance) {
     if (IsBoundPipelineFake(cb)) { rtfill::FillColorAttachment(cb); return; }
     if (!buffer || IsFake(buffer)) return; // [CRASHFIX]
+    rtfill::MarkRealDraw(cb);
     auto realRaw = RealProc("vkCmdDrawIndexedIndirect");
     auto real = reinterpret_cast<void(__cdecl*)(VkCommandBuffer, VkBuffer, VkDeviceSize, uint32_t, uint32_t, uint32_t, int32_t, uint32_t)>(realRaw);
     if (real) real(cb, buffer, offset, drawCount, instanceCount, firstIndex, vertexOffset, firstInstance);
@@ -7261,10 +7269,16 @@ vkCmdEndRendering(VkCommandBuffer cb) {
         static volatile LONG n = 0;
         if (InterlockedIncrement(&n) <= 8)
             LogLine("dynrend: vkCmdEndRendering without active state for cb=%p", cb);
+        rtfill::ClearColorAttachment(cb);
         return;
     }
     auto cmdEnd = RealExport<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass");
     if (cmdEnd) cmdEnd(cb);
+    // [MENU-FIX] After the render pass ends, fill the color attachment with
+    // ambient color if this pass drew nothing real (all FAKE pipelines,
+    // silent compute skips). Done post-end so the attachment is free.
+    rtfill::FillColorAttachmentIfEmpty(cb);
+    rtfill::ClearColorAttachment(cb);
     // Framebuffer stays in g_fbCache (reused next frame). Destroy on process exit.
 }
 
@@ -8968,12 +8982,14 @@ namespace rtfill {
     static std::unordered_map<uint64_t, VkFormat>* s_colorFormat = nullptr;
     static std::unordered_map<uint64_t, VkImageSubresourceRange>* s_colorRange = nullptr;
     static std::unordered_map<uint64_t, bool>* s_filledThisPass = nullptr;
+    static std::unordered_map<uint64_t, bool>* s_realDrawThisPass = nullptr;
 
     void TrackColorAttachment(VkCommandBuffer cb, VkImage image, VkFormat format, VkImageSubresourceRange range) {
         InitOnce();
         if (!s_enabled || !cb || !image || IsFake(image)) return;
         AcquireSRWLockExclusive(&s_lock);
         if (s_filledThisPass) s_filledThisPass->erase(K(cb));
+        if (s_realDrawThisPass) s_realDrawThisPass->erase(K(cb));
         ReleaseSRWLockExclusive(&s_lock);
         AcquireSRWLockExclusive(&s_lock);
         EnsureMaps();
@@ -8981,6 +8997,7 @@ namespace rtfill {
         if (!s_colorFormat) s_colorFormat = new (std::nothrow) std::unordered_map<uint64_t, VkFormat>();
         if (!s_colorRange) s_colorRange = new (std::nothrow) std::unordered_map<uint64_t, VkImageSubresourceRange>();
         if (!s_filledThisPass) s_filledThisPass = new (std::nothrow) std::unordered_map<uint64_t, bool>();
+        if (!s_realDrawThisPass) s_realDrawThisPass = new (std::nothrow) std::unordered_map<uint64_t, bool>();
         (*s_colorAttach)[K(cb)] = image;
         (*s_colorFormat)[K(cb)] = format;
         (*s_colorRange)[K(cb)] = range;
@@ -9053,6 +9070,27 @@ namespace rtfill {
 
         AcquireSRWLockExclusive(&s_lock);
         if (s_layouts) (*s_layouts)[K(image)] = b.newLayout;
+        ReleaseSRWLockExclusive(&s_lock);
+    }
+
+    void FillColorAttachmentIfEmpty(VkCommandBuffer cb) {
+        InitOnce();
+        if (!s_enabled || !cb) return;
+        bool tracked = false, realDrawn = false, filled = false;
+        AcquireSRWLockShared(&s_lock);
+        if (s_colorAttach && s_colorAttach->find(K(cb)) != s_colorAttach->end()) tracked = true;
+        if (s_realDrawThisPass && (*s_realDrawThisPass)[K(cb)]) realDrawn = true;
+        if (s_filledThisPass && (*s_filledThisPass)[K(cb)]) filled = true;
+        ReleaseSRWLockShared(&s_lock);
+        if (!tracked || realDrawn || filled) return;
+        FillColorAttachment(cb);
+    }
+
+    void MarkRealDraw(VkCommandBuffer cb) {
+        InitOnce();
+        if (!s_enabled || !cb) return;
+        AcquireSRWLockExclusive(&s_lock);
+        if (s_realDrawThisPass) (*s_realDrawThisPass)[K(cb)] = true;
         ReleaseSRWLockExclusive(&s_lock);
     }
 
