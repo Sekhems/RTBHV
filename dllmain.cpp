@@ -5477,6 +5477,7 @@ vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* pPresentInfo) {
 // ---------------------------------------------------------------------------
 // v5: диагностика instance / surface / ресурсов
 // ---------------------------------------------------------------------------
+static void InstallGetProcAddressHook() noexcept;
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
 vkCreateInstance(const VkInstanceCreateInfo* pInfo, const VkAllocationCallbacks* pAllocator,
     VkInstance* pInstance) {
