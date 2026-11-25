@@ -5506,10 +5506,19 @@ static void InstallGetProcAddressHook() noexcept {
     if (!g_thisModule) return;
     HMODULE kernel32 = GetModuleHandleA("kernel32.dll");
     if (!kernel32) return;
-    FARPROC realGpa = GetProcAddress(kernel32, "GetProcAddress");
-    if (!realGpa) return;
-    uintptr_t origAddr = reinterpret_cast<uintptr_t>(realGpa);
-    if (*reinterpret_cast<uint8_t*>(origAddr) == 0xE9) return; // already hooked
+    FARPROC gpAddr = GetProcAddress(kernel32, "GetProcAddress");
+    if (!gpAddr) return;
+    uintptr_t origAddr = reinterpret_cast<uintptr_t>(gpAddr);
+    // On modern Windows, kernel32's GetProcAddress is a forwarder (JMP rel32)
+    // to the real implementation in api-ms-win-core-libraryloader-l1-1-0.dll.
+    // Hooking the forwarder corrupts the loader. Resolve the forwarder and
+    // hook the real implementation instead.
+    if (*reinterpret_cast<uint8_t*>(origAddr) == 0xE9) {
+        int32_t rel = *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(origAddr) + 1);
+        origAddr = origAddr + 5 + static_cast<uintptr_t>(rel);
+        LogLine("GetProcAddress hook: resolved forwarder to real impl at %p", (void*)origAddr);
+    }
+    if (*reinterpret_cast<uint8_t*>(origAddr) == 0xE9) return; // still a forwarder, bail
     GpaTrampoline = static_cast<char*>(VirtualAlloc(nullptr, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
     if (!GpaTrampoline) return;
     memcpy(GpaTrampoline, reinterpret_cast<const char*>(origAddr), 14);
