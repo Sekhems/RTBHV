@@ -8239,7 +8239,8 @@ if (!result) {
 // stub for any vk* name that the export table doesn't carry, permanently
 // eliminating EXEC@0 for unknown extension names.
 // ---------------------------------------------------------------------------
-static FARPROC RealGetProcAddress = nullptr;
+using RealGpaFn = FARPROC (WINAPI *)(HMODULE, LPCSTR);
+static RealGpaFn RealGetProcAddress = nullptr;
 static char* GpaTrampoline = nullptr;
 static volatile LONG g_gpaHookInstalled = 0;
 
@@ -8279,7 +8280,7 @@ static void InstallGetProcAddressHook() noexcept {
     memcpy(reinterpret_cast<char*>(origAddr), &hookOffset, 4);
     reinterpret_cast<char*>(origAddr)[4] = 0xE9;
     VirtualProtect(mbi.BaseAddress, mbi.RegionSize, oldProtect, &oldProtect);
-    RealGetProcAddress = reinterpret_cast<FARPROC>(GpaTrampoline);
+    RealGetProcAddress = reinterpret_cast<RealGpaFn>(GpaTrampoline);
     LogLine("GetProcAddress hook installed: catch-all for vk* names on g_thisModule");
 }
 
