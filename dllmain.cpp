@@ -6431,6 +6431,32 @@ vkDeferredOperationJoinKHR(VkDevice d, VkDeferredOperationKHR op) {
 }
 
 // ---------------------------------------------------------------------------
+// [FIX EXEC@0] Export wrappers for NULL-ring names. The game resolves these
+// via direct GetProcAddress on this module. None of these names were in the
+// generated export table, so GetProcAddress returned NULL -> game cached NULL
+// -> EXEC@0 (and in some cases a silent crash when the SEH guard missed).
+// These wrappers guarantee the names exist in the export table and return
+// safe no-op results. void* params are x64-equivalent to all Vulkan handles
+// and struct pointers, so no SDK type dependency is needed.
+// ---------------------------------------------------------------------------
+extern "C" __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
+vkCmdPushXeSSDescriptorsINTEL(void* cb, uint32_t, const void*) {}
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkGetCalibratedTimestampsKHR(void* d, const void*, void*) { return VK_SUCCESS; }
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkQueueNotifyOutOfBandNV(void* q, const void*) { return VK_SUCCESS; }
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkGetLatencyTimingsNV(void* d, const void*, void*) { return VK_SUCCESS; }
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkSetLatencyMarkerNV(void* q, const void*) { return VK_SUCCESS; }
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkLatencySleepNV(const void*) { return VK_SUCCESS; }
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkSetLatencySleepModeNV(void* d, const void*) { return VK_SUCCESS; }
+extern "C" __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+vkGetDynamicRenderingTilePropertiesQCOM(void* pd, const void*, void*) { return VK_SUCCESS; }
+
+// ---------------------------------------------------------------------------
 // Dynamic-rendering emulation hooks (definitions)
 // ---------------------------------------------------------------------------
 
