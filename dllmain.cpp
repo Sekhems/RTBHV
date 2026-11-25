@@ -5475,6 +5475,63 @@ vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* pPresentInfo) {
 }
 
 // ---------------------------------------------------------------------------
+// [FIX EXEC@0] Catch-all GetProcAddress hook (lazy install). The game resolves
+// Vulkan extension names via direct GetProcAddress on g_thisModule (not through
+// vkGetInstanceProcAddr). Any vk* name not in the export table returns NULL ->
+// game caches NULL -> EXEC@0. Individual dllexport wrappers are not scalable:
+// the game probes hundreds of extension names and always finds new ones.
+// This inline hook intercepts GetProcAddress and returns a generic stub for
+// any vk* name that the export table doesn't carry, permanently eliminating
+// EXEC@0 for unknown extension names.
+// IMPORTANT: installed lazily (not in DllMain) because hooking GetProcAddress
+// during DLL_PROCESS_ATTACH breaks the loader itself (loader-lock held).
+// ---------------------------------------------------------------------------
+using RealGpaFn = FARPROC (WINAPI *)(HMODULE, LPCSTR);
+static RealGpaFn RealGetProcAddress = nullptr;
+static char* GpaTrampoline = nullptr;
+static volatile LONG g_gpaHookInstalled = 0;
+
+extern "C" __declspec(noinline) FARPROC WINAPI HookedGetProcAddress(HMODULE module, LPCSTR name) {
+    FARPROC result = RealGetProcAddress(module, name);
+    if (!result && module == g_thisModule && name && name[0] == 'v' && name[1] == 'k') {
+        if (!strncmp(name, "vkCmd", 4))
+            return reinterpret_cast<FARPROC>(&Stub_NoopCmd);
+        return reinterpret_cast<FARPROC>(&Stub_ReturnSuccess);
+    }
+    return result;
+}
+
+static void InstallGetProcAddressHook() noexcept {
+    if (InterlockedCompareExchange(&g_gpaHookInstalled, 1, 0) != 0) return;
+    if (!g_thisModule) return;
+    HMODULE kernel32 = GetModuleHandleA("kernel32.dll");
+    if (!kernel32) return;
+    FARPROC realGpa = GetProcAddress(kernel32, "GetProcAddress");
+    if (!realGpa) return;
+    uintptr_t origAddr = reinterpret_cast<uintptr_t>(realGpa);
+    if (*reinterpret_cast<uint8_t*>(origAddr) == 0xE9) return; // already hooked
+    GpaTrampoline = static_cast<char*>(VirtualAlloc(nullptr, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+    if (!GpaTrampoline) return;
+    memcpy(GpaTrampoline, reinterpret_cast<const char*>(origAddr), 14);
+    uintptr_t backTarget = origAddr + 14;
+    uint32_t backOffset = static_cast<uint32_t>(
+        backTarget - (reinterpret_cast<uintptr_t>(GpaTrampoline) + 14) - 5);
+    GpaTrampoline[14] = 0xE9;
+    memcpy(GpaTrampoline + 15, &backOffset, 4);
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!VirtualQuery(reinterpret_cast<LPCVOID>(origAddr), &mbi, sizeof(mbi))) return;
+    DWORD oldProtect;
+    if (!VirtualProtect(mbi.BaseAddress, mbi.RegionSize, PAGE_EXECUTE_READWRITE, &oldProtect)) return;
+    uintptr_t hookAddr = reinterpret_cast<uintptr_t>(&HookedGetProcAddress);
+    uint32_t hookOffset = static_cast<uint32_t>(hookAddr - (origAddr + 5));
+    memcpy(reinterpret_cast<char*>(origAddr), &hookOffset, 4);
+    reinterpret_cast<char*>(origAddr)[4] = 0xE9;
+    VirtualProtect(mbi.BaseAddress, mbi.RegionSize, oldProtect, &oldProtect);
+    RealGetProcAddress = reinterpret_cast<RealGpaFn>(GpaTrampoline);
+    LogLine("GetProcAddress hook installed: catch-all for vk* names on g_thisModule");
+}
+
+// ---------------------------------------------------------------------------
 // v5: диагностика instance / surface / ресурсов
 // ---------------------------------------------------------------------------
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
@@ -8246,62 +8303,6 @@ if (!result) {
     return result;
 }
 
-// ---------------------------------------------------------------------------
-// [FIX EXEC@0] Catch-all GetProcAddress hook (lazy install). The game resolves
-// Vulkan extension names via direct GetProcAddress on g_thisModule (not through
-// vkGetInstanceProcAddr). Any vk* name not in the export table returns NULL ->
-// game caches NULL -> EXEC@0. Individual dllexport wrappers are not scalable:
-// the game probes hundreds of extension names and always finds new ones.
-// This inline hook intercepts GetProcAddress and returns a generic stub for
-// any vk* name that the export table doesn't carry, permanently eliminating
-// EXEC@0 for unknown extension names.
-// IMPORTANT: installed lazily (not in DllMain) because hooking GetProcAddress
-// during DLL_PROCESS_ATTACH breaks the loader itself (loader-lock held).
-// ---------------------------------------------------------------------------
-using RealGpaFn = FARPROC (WINAPI *)(HMODULE, LPCSTR);
-static RealGpaFn RealGetProcAddress = nullptr;
-static char* GpaTrampoline = nullptr;
-static volatile LONG g_gpaHookInstalled = 0;
-
-extern "C" __declspec(noinline) FARPROC WINAPI HookedGetProcAddress(HMODULE module, LPCSTR name) {
-    FARPROC result = RealGetProcAddress(module, name);
-    if (!result && module == g_thisModule && name && name[0] == 'v' && name[1] == 'k') {
-        if (!strncmp(name, "vkCmd", 4))
-            return reinterpret_cast<FARPROC>(&Stub_NoopCmd);
-        return reinterpret_cast<FARPROC>(&Stub_ReturnSuccess);
-    }
-    return result;
-}
-
-static void InstallGetProcAddressHook() noexcept {
-    if (InterlockedCompareExchange(&g_gpaHookInstalled, 1, 0) != 0) return;
-    if (!g_thisModule) return;
-    HMODULE kernel32 = GetModuleHandleA("kernel32.dll");
-    if (!kernel32) return;
-    FARPROC realGpa = GetProcAddress(kernel32, "GetProcAddress");
-    if (!realGpa) return;
-    uintptr_t origAddr = reinterpret_cast<uintptr_t>(realGpa);
-    if (*reinterpret_cast<uint8_t*>(origAddr) == 0xE9) return; // already hooked
-    GpaTrampoline = static_cast<char*>(VirtualAlloc(nullptr, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
-    if (!GpaTrampoline) return;
-    memcpy(GpaTrampoline, reinterpret_cast<const char*>(origAddr), 14);
-    uintptr_t backTarget = origAddr + 14;
-    uint32_t backOffset = static_cast<uint32_t>(
-        backTarget - (reinterpret_cast<uintptr_t>(GpaTrampoline) + 14) - 5);
-    GpaTrampoline[14] = 0xE9;
-    memcpy(GpaTrampoline + 15, &backOffset, 4);
-    MEMORY_BASIC_INFORMATION mbi;
-    if (!VirtualQuery(reinterpret_cast<LPCVOID>(origAddr), &mbi, sizeof(mbi))) return;
-    DWORD oldProtect;
-    if (!VirtualProtect(mbi.BaseAddress, mbi.RegionSize, PAGE_EXECUTE_READWRITE, &oldProtect)) return;
-    uintptr_t hookAddr = reinterpret_cast<uintptr_t>(&HookedGetProcAddress);
-    uint32_t hookOffset = static_cast<uint32_t>(hookAddr - (origAddr + 5));
-    memcpy(reinterpret_cast<char*>(origAddr), &hookOffset, 4);
-    reinterpret_cast<char*>(origAddr)[4] = 0xE9;
-    VirtualProtect(mbi.BaseAddress, mbi.RegionSize, oldProtect, &oldProtect);
-    RealGetProcAddress = reinterpret_cast<RealGpaFn>(GpaTrampoline);
-    LogLine("GetProcAddress hook installed: catch-all for vk* names on g_thisModule");
-}
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
     if (reason == DLL_PROCESS_DETACH && reserved != nullptr) {
