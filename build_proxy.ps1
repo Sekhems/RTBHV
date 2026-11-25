@@ -123,10 +123,13 @@ $localExports = @(
 'vkCmdResetEvent2KHR',
 'vkCmdWaitEvents2',
 'vkCmdWaitEvents2KHR',
-'vkCreatePrivateDataSlot',
-'vkDestroyPrivateDataSlot',
-'vkSetPrivateData',
-'vkGetPrivateData'
+    'vkCreatePrivateDataSlot',
+    'vkDestroyPrivateDataSlot',
+    'vkSetPrivateData',
+    'vkGetPrivateData',
+    'vkQueueSubmit',
+    'vkQueueWaitIdle',
+    'vkWaitForFences'
 )
 $excludedExports = @('vkGetInstanceProcAddr', 'vkGetDeviceProcAddr') + $localExports
 $exports = @($exports | Where-Object { $excludedExports -notcontains $_ })
